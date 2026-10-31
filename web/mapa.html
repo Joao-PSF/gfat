@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoFAT · Mapa</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="geofat.css">
+<script src="geofat.js"></script>
+<style>
+  #mapa { position: absolute; inset: 0; background: #EEF0F2; }
+  #mapa.modo-local { cursor: crosshair; }
+  .leaflet-control-zoom a { width: 40px !important; height: 40px !important; line-height: 40px !important; }
+  .leaflet-bar { border: 0 !important; box-shadow: 0 1px 3px rgba(16,24,40,0.14) !important; border-radius: 8px !important; overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="app">
+<main class="principal coluna">
+  <div class="barra-topo">
+    <h1>Mapa</h1>
+    <form class="busca" style="flex:1 1 260px;max-width:420px" id="form-busca">
+      <label for="busca" class="so-leitor">Buscar imóvel ou matrícula</label>
+      <input id="busca" type="search" placeholder="Buscar #imóvel ou matrícula">
+    </form>
+    <span class="mudo" style="font-size:13px" id="busca-msg"></span>
+    <div class="seg" role="group" aria-label="Mapa base" style="margin-left:auto" id="bases"></div>
+  </div>
+  <div class="corpo">
+    <aside class="painel esq" aria-label="Camadas e legenda" style="flex-basis:260px;padding:20px;gap:22px">
+      <div style="display:flex;flex-direction:column;gap:4px"><h2 style="margin:0 0 6px">Mostrar no mapa</h2><div id="camadas"></div></div>
+      <div style="display:flex;flex-direction:column;gap:2px"><h2 style="margin:0 0 6px">Tipo de imóvel</h2><div id="legenda"></div>
+        <span class="mudo" style="margin-top:6px;font-size:12.5px">Clique em um tipo para ocultá-lo.</span></div>
+      <div style="display:flex;align-items:center;gap:10px;padding:12px;background:#FDF0EF;border-radius:8px;font-size:13px;color:#8E2A22">
+        <span style="width:14px;height:14px;border:2px solid #D93C3C;border-radius:50%;flex:none"></span><span id="n-div"></span></div>
+      <div style="font-size:12.5px;color:var(--mudo);display:flex;flex-direction:column;gap:6px">
+        <span><span class="cor" style="border-radius:50%;background:#1d2733"></span> câmera e linha de visada (tracejada: sugerida)</span>
+        <span><span class="cor" style="background:transparent;border:2px solid #0b4f71"></span> edificação (tracejada: Open Buildings)</span>
+        <span><span class="cor" style="background:#F6D3AB;border:2px solid #E8912D"></span> edificação com associação sugerida</span>
+        <span><span class="cor" style="background:#B5DCD9;border:2px solid #0B7A75"></span> edificação com associação confirmada</span>
+        <span><span class="cor" style="background:transparent;border:2px dashed #8A5A2B"></span> lote (limite do terreno, se cadastrado)</span>
+        <span><span class="cor" style="border-radius:50%;background:#F2A33A"></span> ponto de captura · traço = sentido do deslocamento</span>
+      </div>
+    </aside>
+    <section aria-label="Mapa" style="position:relative;flex:999 1 420px;min-width:0;min-height:420px">
+      <div id="mapa"></div>
+      <span id="dica" style="position:absolute;left:60px;top:16px;z-index:500;padding:8px 12px;background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(16,24,40,0.12);font-size:13px;color:var(--suave);pointer-events:none">Clique em um imóvel ou numa edificação para ver os detalhes</span>
+    </section>
+    <aside class="painel" aria-label="Imóvel selecionado" id="detalhe" hidden style="position:relative"></aside>
+  </div>
+</main>
+</div>
+<script>
+G.menu('mapa.html');
+const { esc, nf, $, $$, icone } = G;
+const mapa = L.map('mapa', { zoomControl: false }).setView([-2.53, -44.30], 15);
+L.control.zoom({ position: 'bottomright' }).addTo(mapa);
+L.control.scale({ position: 'bottomleft', imperial: false }).addTo(mapa);
+const BASES = {
+  mapa: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 21, maxNativeZoom: 19, attribution: '&copy; OpenStreetMap' }),
+  satelite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 21, maxNativeZoom: 19, attribution: 'Imagens &copy; Esri' }),
+};
+const grupos = { lotes: L.layerGroup(), edificacoes: L.layerGroup(), trajetos: L.layerGroup(), cameras: L.layerGroup(), alvos: L.layerGroup(), fachadas: L.layerGroup(), contexto: L.layerGroup() };
+Object.values(grupos).forEach(g => g.addTo(mapa));
+let base = 'mapa', camadas = { fachadas: true, divergencias: true, edificacoes: true, lotes: true, cameras: false, trajetos: false, alvos: true }, ocultas = new Set();
+let dados = [], fotos = [], trajetos = null, alvos = [], atual = null, edifAtual = null, modoLocal = false, pedidoEdif = 0;
+const SIT_ALVO = { observado_provavel: ['observado (provável)', '#0B7A75'], observado_possivel: ['talvez observado', '#E8912D'],
+                   nao_observado: ['não observado nas fotos', '#5B6470'], sem_foto: ['sem foto útil', '#5B6470'] };
+const COR_ASSOC = { confirmada: ['#0B7A75', 0.32], sugerida: ['#E8912D', 0.22] };
+// Ponto a `r` graus de lat/lon no azimute `az` (para setas e cones)
+const destino = (lat, lon, az, r) => { const a = az * Math.PI / 180; return [lat + r * Math.cos(a), lon + r * Math.sin(a) / Math.cos(lat * Math.PI / 180)]; };
+const DIV = ['possivel_divergencia', 'divergencia_confirmada'];
+
+function bases() {
+  Object.values(BASES).forEach(l => l.remove()); BASES[base].addTo(mapa).bringToBack();
+  $('#bases').innerHTML = [['mapa', 'Mapa'], ['satelite', 'Satélite']].map(([k, r]) => `<button type="button" aria-pressed="${base === k}" data-base="${k}" style="height:32px;padding:0 14px">${r}</button>`).join('');
+  $$('[data-base]').forEach(b => b.onclick = () => { base = b.dataset.base; bases(); });
+}
+
+function painelCamadas() {
+  $('#camadas').innerHTML = [['fachadas', 'Fachadas por tipo'], ['divergencias', 'Divergências'], ['edificacoes', 'Edificações (zoom 17+)'], ['lotes', 'Lotes (zoom 17+)'],
+                             ['cameras', 'Pontos de captura'], ['trajetos', 'Trajetórias'], ['alvos', 'Alvos da análise direcionada']]
+    .map(([k, r]) => `<label class="interruptor"><input type="checkbox" data-camada="${k}" ${camadas[k] ? 'checked' : ''}><span class="trilho-int"></span><span>${r}</span></label>`).join('');
+  $$('[data-camada]').forEach(i => i.onchange = () => { camadas[i.dataset.camada] = i.checked; desenhar(); edificacoes(); });
+  const conta = {};
+  dados.forEach(f => { const c = f.properties.categoria_final || 'sem_categoria'; if (f.properties.situacao !== 'descartado') conta[c] = (conta[c] || 0) + 1; });
+  $('#legenda').innerHTML = [...G.CATEGORIAS, 'sem_categoria'].map(c => `<button type="button" data-cat="${c}" aria-pressed="${!ocultas.has(c)}"
+      style="display:flex;align-items:center;gap:10px;height:34px;padding:0 8px;margin:0 -8px;background:transparent;border:0;border-radius:6px;color:${ocultas.has(c) ? 'var(--fraco)' : 'var(--texto)'};text-align:left;cursor:pointer">
+      <span style="width:14px;height:14px;border-radius:4px;background:${G.CAT_COR[c]};opacity:${ocultas.has(c) ? 0.25 : 1};flex:none"></span><span>${G.CAT_NOME[c]}</span>
+      <span class="num mudo" style="margin-left:auto;font-size:13px">${nf(conta[c] || 0)}</span></button>`).join('');
+  $$('[data-cat]').forEach(b => b.onclick = () => { ocultas.has(b.dataset.cat) ? ocultas.delete(b.dataset.cat) : ocultas.add(b.dataset.cat); painelCamadas(); desenhar(); });
+  $('#n-div').innerHTML = `<strong>${dados.filter(f => DIV.includes(f.properties.situacao)).length}</strong> imóvel(is) com divergência (possível ou confirmada)`;
+}
+
+function desenhar() {
+  grupos.fachadas.clearLayers(); grupos.cameras.clearLayers(); grupos.trajetos.clearLayers(); grupos.alvos.clearLayers();
+  // Alvo = coordenada da planilha (losango); as observações associadas a ele abrem pelo popup
+  if (camadas.alvos) alvos.forEach(f => {
+    const p = f.properties, [lon, lat] = f.geometry.coordinates, s = SIT_ALVO[p.situacao] || ['não analisado', '#161A1F'];
+    const icone = L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9],
+      html: `<span style="display:block;width:14px;height:14px;margin:2px;transform:rotate(45deg);border:2px solid #fff;background:${s[1]};box-shadow:0 0 0 1px #161A1F"></span>` });
+    const obs = (p.observacoes || []).map(o => `<a href="#" data-obs="${o.imovel_id}">#${o.imovel_id}</a> (${esc(o.associacao)}${o.categoria ? ', IA: ' + esc(G.CAT_NOME[o.categoria] || o.categoria) : ''})`).join('<br>');
+    L.marker([lat, lon], { icon: icone, keyboard: true, title: `Alvo #${p.id}` })
+      .bindTooltip(`Alvo #${p.id} · matrícula ${esc(p.matricula)} · ${s[0]}`)
+      .bindPopup(`<b>Alvo #${p.id}</b> · matrícula ${esc(p.matricula)}<br>${esc(p.localidade || '')} · ${s[0]}${p.analise_id ? ` (análise #${p.analise_id})` : ''}<br>${obs ? 'Observações associadas (sugestões):<br>' + obs : 'Nenhuma observação associada.'}<br><a href="processamentos.html?direcionada=1">Ver na análise direcionada</a>`)
+      .on('popupopen', e => e.popup.getElement().querySelectorAll('[data-obs]').forEach(a => a.onclick = ev => { ev.preventDefault(); abrir(+a.dataset.obs); }))
+      .addTo(grupos.alvos);
+  });
+  if (camadas.trajetos && trajetos) L.geoJSON(trajetos, { style: { color: '#5B6470', weight: 3, opacity: 0.7 },
+    onEachFeature: (f, l) => l.bindTooltip(`Trajetória · ${f.properties.fotos} fotos em sequência`) }).addTo(grupos.trajetos);
+  if (camadas.cameras) fotos.forEach(f => {
+    L.circleMarker([f.lat, f.lon], { radius: 5, color: '#fff', weight: 2, fillColor: '#F2A33A', fillOpacity: 1 })
+      .bindTooltip(`Captura · ${esc(f.arquivo.split('/').pop())}${f.capturada_em ? ' · ' + G.dataHora(f.capturada_em) : ''}`
+        + (f.rumo != null ? ` · deslocamento ${Math.round(f.rumo)}°${f.rumo_confiavel ? '' : ' (não confiável)'}` : ' · sentido do deslocamento desconhecido')
+        + (f.lado ? ` · lado ${f.lado}` : '')).addTo(grupos.cameras);
+    if (f.rumo != null && f.rumo_confiavel) L.polyline([[f.lat, f.lon], destino(f.lat, f.lon, f.rumo, 0.00012)], { color: '#F2A33A', weight: 3, interactive: false }).addTo(grupos.cameras);
+  });
+  for (const f of dados) {
+    const p = f.properties, c = p.categoria_final || 'sem_categoria';
+    if (!camadas.fachadas || ocultas.has(c) || p.situacao === 'descartado') continue;
+    const [lon, lat] = f.geometry.coordinates, div = camadas.divergencias && DIV.includes(p.situacao);
+    L.circleMarker([lat, lon], { radius: p.id === atual?.id ? 10 : 8, weight: div ? 3 : p.id === atual?.id ? 3 : 1.5, color: div ? '#D93C3C' : p.id === atual?.id ? '#161A1F' : '#fff',
+                                 fillColor: G.CAT_COR[c], fillOpacity: 0.9 })
+      .bindTooltip(`#${p.id} · ${G.CAT_NOME[c]} · ${G.SITUACAO[p.situacao][0]}`).on('click', e => { if (!modoLocal) abrir(p.id); }).addTo(grupos.fachadas);
+  }
+}
+
+async function edificacoes() {
+  const vez = ++pedidoEdif;  // só a última resposta desenha (o mapa pode mover várias vezes antes)
+  grupos.edificacoes.clearLayers(); grupos.lotes.clearLayers();
+  if (mapa.getZoom() < 17) return;
+  const b = mapa.getBounds(), bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(v => v.toFixed(6)).join(',');
+  const [ed, lt] = await Promise.all([camadas.edificacoes ? G.api(`/api/edificacoes?bbox=${bbox}`) : null, camadas.lotes ? G.api(`/api/lotes?bbox=${bbox}`) : null]);
+  if (vez !== pedidoEdif) return;
+  if (lt) L.geoJSON(lt, { style: { color: '#8A5A2B', weight: 1.5, dashArray: '6 4', fill: false }, interactive: false }).addTo(grupos.lotes);
+  if (ed) L.geoJSON(ed, {
+    style: f => { const [c, o] = COR_ASSOC[f.properties.associacao] || ['#0b4f71', 0.04];
+                  return { color: c, weight: f.properties.id === edifAtual ? 3 : 1, fillOpacity: o, dashArray: f.properties.fonte === 'osm' ? null : '4 3' }; },
+    onEachFeature: (f, l) => {
+      const p = f.properties;
+      l.bindTooltip(`Edificação #${p.id} · ${G.FONTE_EDIF[p.fonte]}${p.confianca ? ' ' + p.confianca.toFixed(2) : ''}`
+        + (p.observacoes ? ` · ${p.observacoes} observação(ões), ${p.associacao === 'confirmada' ? 'com confirmação' : 'sugeridas'}` : ''));
+      l.on('click', e => { L.DomEvent.stop(e); if (modoLocal && atual) definirLocal({ edificacao_id: p.id }); else abrirEdificacao(p.id); });
+    },
+  }).addTo(grupos.edificacoes);
+}
+
+async function carregar(ajustar) {
+  [dados, fotos, trajetos, alvos] = await Promise.all([G.api('/api/imoveis').then(r => r.features), G.api('/api/fotos'), G.api('/api/trajetos'),
+                                                      G.api('/api/alvos').then(r => r.features)]);
+  painelCamadas(); desenhar(); edificacoes();
+  if (ajustar && dados.length) mapa.fitBounds(L.geoJSON({ type: 'FeatureCollection', features: dados }).getBounds(), { maxZoom: 18, padding: [30, 30] });
+}
+
+// Câmera, cone de visão, linha de visada, edificações próximas e fachada estimada do imóvel aberto
+function contexto(d) {
+  grupos.contexto.clearLayers();
+  const cand = new Map(d.candidatas.map(c => [c.edificacao_id, c]));
+  L.geoJSON(d.edificacoes, {
+    style: f => { const id = f.properties.id, escolhida = id === d.edificacao_id, c = cand.has(id);
+                  return { color: escolhida ? '#d62828' : c ? '#E8912D' : '#0b4f71', weight: escolhida || c ? 2 : 1, fillOpacity: escolhida ? 0.35 : c ? 0.15 : 0.05,
+                           dashArray: f.properties.fonte === 'osm' ? null : '4 3' }; },
+    onEachFeature: (f, l) => {
+      const c = cand.get(f.properties.id);
+      l.bindTooltip(`Edificação #${f.properties.id} · ${G.FONTE_EDIF[f.properties.fonte]}${f.properties.confianca ? ' · score ' + f.properties.confianca.toFixed(2) : ''}`
+        + (c ? ` · candidata, pontuação ${nf(c.pontuacao, 2)}` : ''));
+      l.on('click', e => { L.DomEvent.stop(e); if (modoLocal) definirLocal({ edificacao_id: f.properties.id }); else abrirEdificacao(f.properties.id); });
+    },
+  }).addTo(grupos.contexto);
+  const cam = [d.lat_camera, d.lon_camera], fachada = [d.lat, d.lon], ev = d.localizacao_evidencias || {};
+  if (ev.azimute != null) {  // setor de visão usado na busca das candidatas
+    const pts = []; for (let k = 0; k <= 8; k++) pts.push(destino(cam[0], cam[1], ev.azimute - ev.tolerancia + k * ev.tolerancia / 4, 0.00054));
+    L.polygon([cam, ...pts], { color: '#f08c00', weight: 1, fillOpacity: 0.1, interactive: false }).addTo(grupos.contexto);
+  } else if (d.direcao != null) {
+    L.polygon([cam, destino(cam[0], cam[1], d.direcao - d.fov_horizontal / 2, 0.0004), destino(cam[0], cam[1], d.direcao + d.fov_horizontal / 2, 0.0004)],
+              { color: '#f08c00', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(grupos.contexto);
+  }
+  L.polyline([cam, fachada], { color: '#1d2733', weight: 2, dashArray: d.localizacao_fonte === 'manual' ? null : '5 5', interactive: false }).addTo(grupos.contexto);
+  L.circleMarker(cam, { radius: 6, color: '#fff', weight: 2, fillColor: '#1d2733', fillOpacity: 1 }).bindTooltip('câmera').addTo(grupos.contexto);
+  L.circleMarker(fachada, { radius: 13, color: '#d62828', weight: 3, fill: false, interactive: false }).addTo(grupos.contexto);
+}
+
+function alternarLocal(ligar) {
+  modoLocal = ligar;
+  $('#mapa').classList.toggle('modo-local', ligar);
+  $('#dica').textContent = ligar ? 'Clique na edificação certa (ou num ponto do mapa) para posicionar a fachada' : atual ? 'Arraste para mover · role para aproximar' : 'Clique em um imóvel ou numa edificação para ver os detalhes';
+  const b = $('#btn-local'); if (b) b.textContent = ligar ? 'Cancelar correção' : 'Corrigir localização no mapa';
+}
+mapa.on('click', e => { if (modoLocal && atual) definirLocal({ lat: e.latlng.lat, lon: e.latlng.lng }); });
+mapa.on('moveend', edificacoes);
+
+async function definirLocal(corpo) {
+  alternarLocal(false);
+  try { await G.api(`/api/imoveis/${atual.id}/localizacao`, corpo); } catch (e) { alert('Erro: ' + e.message); return; }
+  await carregar(false); abrir(atual.id);
+}
+
+async function abrir(id) {
+  alternarLocal(false);
+  let d; try { d = await G.api(`/api/imoveis/${id}`); } catch { return; }
+  atual = d; edifAtual = null; contexto(d); desenhar();
+  if (!mapa.getBounds().contains([d.lat, d.lon]) || mapa.getZoom() < 17) mapa.setView([d.lat, d.lon], Math.max(mapa.getZoom(), 18));
+  const b = d.bbox, pc = (v, t) => (v / t * 100) + '%', g = d.gsan, t = d.trajeto, ev = d.localizacao_evidencias || {};
+  const s = d.situacao === 'sem_correspondencia' && !d.gsan_ligacoes ? ['GSAN não importado', ''] : G.SITUACAO[d.situacao];
+  const p = $('#detalhe'); p.hidden = false;
+  p.innerHTML = `<div class="foto-caixa"><img src="/api/fotos/${d.foto_id}/imagem?w=800" alt="Foto da fachada do imóvel ${d.id}">
+      ${b ? `<span class="caixa-fixa" style="left:${pc(b[0], d.largura)};top:${pc(b[1], d.altura)};width:${pc(b[2] - b[0], d.largura)};height:${pc(b[3] - b[1], d.altura)}"></span>` : ''}
+      <button type="button" class="fechar" id="fechar" aria-label="Fechar">${icone('fechar', 14)}</button></div>
+    <div class="bloco" style="gap:18px">
+      <div style="display:flex;flex-direction:column;gap:6px"><span class="selo ${s[1]}">${s[0]}</span><h2 style="font-size:18px;font-weight:700">Imóvel #${d.id}</h2>
+        <span class="mudo" style="font-size:13px">${esc(d.arquivo.split('/').pop())}${d.fachadas_da_foto.length > 1 ? ` · ${d.fachadas_da_foto.length} fachadas nesta foto` : ''}</span></div>
+      <div class="comparacao"><div><small>Cadastro GSAN</small><b>${g ? (g.matriculas ? G.CAT_NOME[g.categoria_gsan] || '—' : 'Sem matrícula') : '—'}</b><small>${g ? (g.matriculas ? g.economias_gsan + ' economia(s)' : '') : 'aparece após a revisão'}</small></div>
+        <div class="${g && g.tipo_divergencia ? 'ia' : ''}"><small>Identificado nas fotos</small><b>${G.CAT_NOME[d.categoria_final || 'sem_categoria']}</b><small>${d.revisado_em ? 'revisado' : 'IA, ' + (d.confianca_ia != null ? Math.round(d.confianca_ia * 100) + '% de confiança' : 'sem classificação')}${d.unidades_final ? ' · ' + d.unidades_final + ' un.' : ''}</small></div></div>
+      <div style="display:flex;flex-direction:column;gap:8px"><h3 style="margin:0;font-size:14px;font-weight:600">Localização da fachada</h3>
+        <div class="${d.localizacao_confianca === 'baixa' ? 'aviso-box' : 'info-box'}">Confiança ${esc(G.LOCAL[d.localizacao_confianca])}: ${esc(G.FONTE_LOCAL[d.localizacao_fonte])}.${d.direcao == null ? ' A foto não tem direção da câmera.' : ''}</div>
+        ${['direcao', 'lado_via'].includes(d.localizacao_fonte) && d.edificacao_id ? '<button type="button" class="btn pri" id="confirmar-local">Confirmar localização sugerida</button>' : ''}
+        <button type="button" class="btn" id="btn-local">Corrigir localização no mapa</button></div>
+      <div style="display:flex;flex-direction:column;gap:8px"><h3 style="margin:0;font-size:14px;font-weight:600">Edificações candidatas</h3>
+        ${d.candidatas.length ? d.candidatas.slice(0, 6).map(c => `<div style="display:flex;gap:8px;align-items:flex-start;font-size:13px">
+            <span style="flex:1;min-width:0"><a href="#" data-ficha="${c.edificacao_id}">#${c.edificacao_id}</a> ${G.FONTE_EDIF[c.fonte]} · pontuação ${nf(c.pontuacao, 2)}
+              <small class="mudo" style="display:block;font-size:12px">${esc(G.evidencia(c.evidencias))}</small></span>
+            ${c.edificacao_id === d.edificacao_id ? `<span class="selo ${d.localizacao_fonte === 'manual' ? 'ok' : 'laranja'}">${d.localizacao_fonte === 'manual' ? 'confirmada' : 'sugerida'}</span>`
+              : `<button type="button" class="btn peq" data-usar="${c.edificacao_id}">Usar esta</button>`}</div>`).join('')
+          : '<span class="mudo" style="font-size:13px">Nenhuma edificação no setor de visão.</span>'}
+        ${ev.motivo ? `<span class="aviso-box">${esc(ev.motivo)}</span>` : ''}
+        <span class="mudo" style="font-size:12px">A pontuação só ordena as candidatas pela geometria (linha de visada, distância, lado da via); não é probabilidade.</span></div>
+      ${d.grupo && d.grupo.membros.length > 1 ? `<div style="display:flex;flex-direction:column;gap:6px"><h3 style="margin:0;font-size:14px;font-weight:600">Mesmo imóvel em outras fotos</h3>
+        <span class="mudo" style="font-size:12.5px">${d.grupo.origem === 'manual' ? 'Grupo confirmado pelo revisor.' : 'Grupo sugerido pela geometria; não foi validado visualmente.'}</span>
+        <span style="display:flex;flex-wrap:wrap;gap:6px">${d.grupo.membros.filter(o => o.id !== d.id).map(o => `<button type="button" class="chip" data-abrir="${o.id}">#${o.id}<small>${esc(o.arquivo.split('/').pop().slice(0, 24))}</small></button>`).join('')}</span></div>` : ''}
+      <dl class="dados" style="margin:0;padding-top:14px;border-top:1px solid var(--borda2)">
+        <dt>Câmera</dt><dd class="num">${d.lat_camera.toFixed(6)}, ${d.lon_camera.toFixed(6)}${d.direcao != null ? ` · ${Math.round(d.direcao)}°` : ''}</dd>
+        <dt>Fachada</dt><dd class="num">${d.lat.toFixed(6)}, ${d.lon.toFixed(6)}</dd>
+        <dt>Edificação</dt><dd>${d.edificacao_id ? `<a href="#" data-ficha="${d.edificacao_id}">${G.FONTE_EDIF[d.edificacao_fonte]} #${d.edificacao_id}</a>` : '—'}</dd>
+        <dt>Deslocamento</dt><dd>${t && t.rumo != null ? `${Math.round(t.rumo)}° (${t.rumo_fonte === 'informado' ? 'informado' : 'pelas fotos vizinhas'}${t.rumo_confiavel ? '' : ', não confiável'})` : 'desconhecido'}${t?.evidencias?.motivo ? ` <span class="mudo">· ${esc(t.evidencias.motivo)}</span>` : ''}</dd>
+        <dt>Lado da via</dt><dd>${t && t.lado ? `${t.lado} (${t.lado_fonte === 'informado' ? 'informado' : 'pela direção da câmera'})${t.rumo_confiavel ? '' : ' · não usado: deslocamento desconhecido'}` : '—'}${t?.evidencias?.conflito_lado ? ` <span class="mudo">· ${esc(t.evidencias.conflito_lado)}</span>` : ''}</dd>
+        <dt>Foto</dt><dd>${d.capturada_em ? G.dataHora(d.capturada_em) : '—'}${d.credito ? ` · <span class="mudo">${esc(d.credito.split(' · ').slice(0, 2).join(' · '))}</span>` : ''}</dd>
+        ${d.referencias.length ? `<dt>Dados públicos</dt><dd>${d.referencias.slice(0, 4).map(r => `${esc(r.descricao || r.categoria)} (${r.distancia_m} m)`).join('; ')}</dd>` : ''}
+      </dl>
+      ${d.historico.length ? `<div style="display:flex;flex-direction:column;gap:4px"><h3 style="margin:0;font-size:14px;font-weight:600">Histórico</h3>${d.historico.slice(0, 6).map(h => `<span class="mudo" style="font-size:12.5px">${G.dataHora(h.em)} · ${esc(h.acao)}</span>`).join('')}</div>` : ''}
+      <div style="display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13.5px;font-weight:600"><a href="revisao.html?foto=${d.foto_id}&imovel=${d.id}" style="text-decoration:none">Abrir na revisão de imagens →</a>
+        ${g ? `<a href="comercial.html?imovel=${d.id}" style="text-decoration:none">Análise comercial →</a>` : ''}</div>
+    </div>`;
+  $('#fechar').onclick = () => { atual = null; p.hidden = true; grupos.contexto.clearLayers(); desenhar(); alternarLocal(false); };
+  $('#btn-local').onclick = () => alternarLocal(!modoLocal);
+  if ($('#confirmar-local')) $('#confirmar-local').onclick = () => definirLocal({ edificacao_id: d.edificacao_id });
+  G.$$('[data-usar]', p).forEach(x => x.onclick = () => definirLocal({ edificacao_id: +x.dataset.usar }));
+  G.$$('[data-ficha]', p).forEach(x => x.onclick = e => { e.preventDefault(); abrirEdificacao(+x.dataset.ficha); });
+  G.$$('[data-abrir]', p).forEach(x => x.onclick = () => abrir(+x.dataset.abrir));
+  alternarLocal(false);
+  setTimeout(() => mapa.invalidateSize(), 50);
+}
+
+// Ficha da edificação: fotografias associadas, grupos, unidades e endereços
+function obsHtml(o, acoes, extra = '', estado = o.localizacao_fonte === 'manual' ? 'associação confirmada' : 'associação sugerida') {
+  return `<div class="obs">${G.miniatura(o)}<span><b>#${o.id}</b> ${G.CAT_NOME[o.categoria_final || 'sem_categoria']}${o.unidades_final ? ' · ' + o.unidades_final + ' un.' : ''}
+      <small class="trunca">${esc(o.arquivo.split('/').pop())}${o.capturada_em ? ' · ' + G.dataHora(o.capturada_em) : ''}</small>
+      <small>${estado}${o.pontuacao != null ? ' · pontuação ' + nf(o.pontuacao, 2) : ''}</small>${extra}</span>
+    <span class="acoes-obs">${acoes}</span></div>`;
+}
+
+async function acao(promessa, id) {
+  try { await promessa; } catch (e) { alert('Erro: ' + e.message); }
+  await carregar(false); abrirEdificacao(id);
+}
+
+async function abrirEdificacao(id) {
+  alternarLocal(false);
+  let e; try { e = await G.api(`/api/edificacoes/${id}`); } catch { return; }
+  atual = null; edifAtual = id; desenhar(); edificacoes();
+  grupos.contexto.clearLayers();
+  const contorno = L.geoJSON(e.geometria, { style: { color: '#d62828', weight: 3, fillOpacity: 0.12 }, interactive: false }).addTo(grupos.contexto);
+  if (!mapa.getBounds().contains(contorno.getBounds()) || mapa.getZoom() < 17) mapa.fitBounds(contorno.getBounds(), { maxZoom: 19, padding: [60, 60] });
+  for (const o of e.observacoes) {
+    L.polyline([[o.lat_camera, o.lon_camera], [o.lat, o.lon]], { color: '#1d2733', weight: 2, dashArray: o.localizacao_fonte === 'manual' ? null : '5 5', interactive: false }).addTo(grupos.contexto);
+    L.circleMarker([o.lat_camera, o.lon_camera], { radius: 5, color: '#fff', weight: 2, fillColor: '#1d2733', fillOpacity: 1 }).bindTooltip(`câmera da observação #${o.id}`).addTo(grupos.contexto);
+  }
+  const porGrupo = {};
+  e.observacoes.forEach(o => { if (o.grupo_id) (porGrupo[o.grupo_id] ||= []).push(o); });
+  const grupos2 = Object.entries(porGrupo).filter(([, os]) => os.length > 1);
+  const marcar = o => `<label class="mudo" style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox" data-marca="${o.id}">marcar</label>`;
+  const grupoHtml = grupos2.map(([g, os]) => { const sug = os[0].grupo_origem === 'sugerido'; return `<div class="grupo-obs ${sug ? 'sugerido' : ''}">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px"><b>Mesmo imóvel · grupo ${g}</b>
+        <span class="selo ${sug ? 'laranja' : 'ok'}">${sug ? 'sugerido pela geometria' : 'confirmado'}</span>
+        ${sug ? `<button type="button" class="btn peq" style="margin-left:auto" data-confirmar="${g}">Confirmar</button>` : ''}</div>
+      ${os.map(o => obsHtml(o, `${marcar(o)}<button type="button" class="btn fantasma peq" data-separar="${o.id}">Separar</button>`)).join('')}</div>`; }).join('');
+  const soltas = e.observacoes.filter(o => !(o.grupo_id && porGrupo[o.grupo_id].length > 1));
+  const p = $('#detalhe'); p.hidden = false;
+  p.innerHTML = `<div class="bloco" style="gap:8px;position:relative">
+      <button type="button" class="fechar" id="fechar" aria-label="Fechar" style="position:absolute;right:12px;top:12px">${icone('fechar', 14)}</button>
+      <span class="selo ${e.observacoes.some(o => o.localizacao_fonte === 'manual') ? 'ok' : e.observacoes.length ? 'laranja' : ''}">${e.observacoes.length ? `${e.observacoes.length} observação(ões)` : 'sem observação associada'}</span>
+      <h2 style="font-size:18px;font-weight:700">Edificação #${e.id}</h2>
+      <dl class="dados" style="margin:0"><dt>Contorno</dt><dd>${G.FONTE_EDIF[e.fonte]} ${esc(e.id_origem)}${e.confianca ? ` · score ${nf(e.confianca, 2)}` : ''}</dd>
+        <dt>Área</dt><dd>${nf(e.area_m2)} m² (projeção da construção)</dd>
+        <dt>Lote</dt><dd>${e.lotes.length ? e.lotes.map(l => `${esc(l.fonte)} ${esc(l.id_origem)} (${l.pct_edificacao}% da edificação)`).join('; ') : '<span class="mudo">nenhum lote cadastrado; o contorno da construção não é o limite do terreno</span>'}</dd></dl>
+    </div>
+    <div class="bloco"><h2>Fotografias associadas</h2>
+      ${grupoHtml}${soltas.map(o => obsHtml(o, `${marcar(o)}<a href="#" data-abrir="${o.id}" style="font-size:12.5px">Detalhes</a>`)).join('')}
+      ${e.observacoes.length ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn peq" id="reunir" disabled>Reunir marcadas</button>
+        <span class="mudo" style="font-size:12px">Marque as observações que mostram o mesmo imóvel.</span></div>`
+        : '<span class="mudo" style="font-size:13px">Nenhuma fachada associada a esta edificação.</span>'}
+      <span class="mudo" style="font-size:12px">Grupos sugeridos usam só a geometria (mesma edificação, pontos de fachada próximos, fotos diferentes). A comparação visual entre fotos não está implementada.</span></div>
+    ${e.candidatas.length ? `<div class="bloco"><h2>Outras observações que podem ser desta edificação</h2>
+      ${e.candidatas.map(o => obsHtml(o, `<button type="button" class="btn peq" data-associar="${o.id}">Associar aqui</button>`,
+        `<small>${esc(G.evidencia(o.evidencias))}</small>`, o.edificacao_id ? `hoje associada à edificação #${o.edificacao_id}` : 'sem edificação associada')).join('')}</div>` : ''}
+    <div class="bloco"><h2>Unidades</h2>
+      ${e.unidades.length ? e.unidades.map(u => `<div style="display:flex;align-items:center;gap:8px;font-size:13.5px"><span style="flex:1">${esc(u.rotulo)}${u.categoria ? ' · ' + G.CAT_NOME[u.categoria] : ''}${u.numero ? ' · nº ' + esc(u.numero) : ''}${u.grupo_id ? ` <span class="mudo">(grupo ${u.grupo_id})</span>` : ''}</span>
+          <button type="button" class="btn fantasma peq" data-remover-unidade="${u.id}">Remover</button></div>`).join('')
+        : '<span class="mudo" style="font-size:13px">Nenhuma unidade registrada. Uma edificação pode ter várias unidades independentes (lojas, casas, apartamentos).</span>'}
+      <form id="nova-unidade" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <label class="so-leitor" for="u-rotulo">Nome da unidade</label><input id="u-rotulo" required maxlength="120" placeholder="ex.: loja térrea" style="grid-column:1/-1;height:34px">
+        <label class="so-leitor" for="u-cat">Tipo</label><select id="u-cat" style="height:34px"><option value="">tipo (opcional)</option>${G.CATEGORIAS.map(c => `<option value="${c}">${G.CAT_NOME[c]}</option>`).join('')}</select>
+        <label class="so-leitor" for="u-num">Número</label><input id="u-num" maxlength="20" placeholder="nº (opcional)" style="height:34px">
+        <label class="so-leitor" for="u-grupo">Grupo</label><select id="u-grupo" style="height:34px"><option value="">sem grupo</option>${grupos2.map(([g]) => `<option value="${g}">grupo ${g}</option>`).join('')}</select>
+        <button type="submit" class="btn peq">Adicionar unidade</button></form></div>
+    <div class="bloco"><h2>Endereços identificados</h2>
+      ${e.leituras.length ? e.leituras.map(l => `<div style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;font-size:13.5px"><span style="flex:1;min-width:160px"><b>nº ${esc(l.numero)}</b> na observação #${l.imovel_id}
+          <small class="mudo" style="display:block">${l.origem === 'ocr' ? 'OCR ' + esc(l.modelo || '') : 'digitado pelo revisor'} · ${l.endereco_candidato ? `${l.referencia_fonte === 'cnefe' ? 'CNEFE' : 'OSM'}: ${esc(l.endereco_candidato)}` : 'sem endereço público com este número por perto'}</small></span>
+          <span class="selo ${l.estado === 'confirmada' ? 'ok' : l.estado === 'rejeitada' ? 'erro' : 'laranja'}">${l.estado}</span>
+          ${l.estado === 'pendente' ? `<button type="button" class="btn peq" data-leitura="${l.id}" data-estado="confirmada">Confirmar</button><button type="button" class="btn fantasma peq" data-leitura="${l.id}" data-estado="rejeitada">Rejeitar</button>` : ''}</div>`).join('')
+        : '<span class="mudo" style="font-size:13px">Nenhum número lido nas fotos desta edificação. Digite o número na Revisão de imagens ou rode "Ler números de endereço" em Processamentos.</span>'}
+      ${e.enderecos_publicos.length ? `<span class="mudo" style="font-size:12.5px">Dados públicos a até 15 m: ${e.enderecos_publicos.slice(0, 6).map(r => `${r.fonte === 'cnefe' ? 'CNEFE' : 'OSM'} ${esc([r.logradouro, r.numero].filter(Boolean).join(', '))} (${nf(r.distancia_m)} m)`).join('; ')}</span>`
+        : '<span class="mudo" style="font-size:12.5px">Nenhum endereço público com número a até 15 m (CNEFE: python -m geofat importar-cnefe).</span>'}</div>
+    ${e.historico.length ? `<div class="bloco"><h2>Histórico</h2>${e.historico.slice(0, 8).map(h => `<span class="mudo" style="font-size:12.5px">${G.dataHora(h.em)} · ${esc(h.acao)}${h.dados?.rotulo ? ' · ' + esc(h.dados.rotulo) : ''}</span>`).join('')}</div>` : ''}`;
+  $('#fechar').onclick = () => { edifAtual = null; p.hidden = true; grupos.contexto.clearLayers(); edificacoes(); };
+  const marcadas = () => G.$$('[data-marca]', p).filter(x => x.checked).map(x => +x.dataset.marca);
+  G.$$('[data-marca]', p).forEach(x => x.onchange = () => { $('#reunir').disabled = marcadas().length < 2; });
+  if ($('#reunir')) $('#reunir').onclick = () => acao(G.api('/api/grupos', { imoveis: marcadas() }), id);
+  G.$$('[data-separar]', p).forEach(x => x.onclick = () => acao(G.api(`/api/imoveis/${x.dataset.separar}/separar`, {}), id));
+  G.$$('[data-confirmar]', p).forEach(x => x.onclick = () => acao(G.api(`/api/grupos/${x.dataset.confirmar}/confirmar`, {}), id));
+  G.$$('[data-associar]', p).forEach(x => x.onclick = () => acao(G.api(`/api/imoveis/${x.dataset.associar}/localizacao`, { edificacao_id: id }), id));
+  G.$$('[data-remover-unidade]', p).forEach(x => x.onclick = () => { if (confirm('Remover esta unidade?')) acao(G.api(`/api/unidades/${x.dataset.removerUnidade}`, undefined, 'DELETE'), id); });
+  G.$$('[data-leitura]', p).forEach(x => x.onclick = () => acao(G.api(`/api/leituras/${x.dataset.leitura}`, { estado: x.dataset.estado }), id));
+  G.$$('[data-abrir]', p).forEach(x => x.onclick = ev => { ev.preventDefault(); abrir(+x.dataset.abrir); });
+  $('#nova-unidade').onsubmit = ev => {
+    ev.preventDefault();
+    acao(G.api(`/api/edificacoes/${id}/unidades`, { rotulo: $('#u-rotulo').value, categoria: $('#u-cat').value || null,
+                                                    numero: $('#u-num').value || null, grupo_id: +$('#u-grupo').value || null }), id);
+  };
+  setTimeout(() => mapa.invalidateSize(), 50);
+}
+
+
+$('#form-busca').onsubmit = async e => {
+  e.preventDefault();
+  const q = $('#busca').value.trim(); if (!q) return;
+  const r = await G.api(`/api/busca?q=${encodeURIComponent(q)}`).catch(() => []);
+  $('#busca-msg').textContent = r.length ? (r.length > 1 ? `${r.length} imóveis; abrindo o primeiro` : '') : 'Nada encontrado (matrícula só depois da associação)';
+  if (r.length) abrir(r[0].id);
+};
+bases();
+const pedido = +new URLSearchParams(location.search).get('imovel');
+const pedidaEdif = +new URLSearchParams(location.search).get('edificacao');
+carregar(!pedido && !pedidaEdif).then(() => { if (pedido) abrir(pedido); else if (pedidaEdif) abrirEdificacao(pedidaEdif); });
+</script>
+</body>
+</html>

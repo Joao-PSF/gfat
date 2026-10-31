@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_USER: geofat
+      POSTGRES_PASSWORD: geofat
+      POSTGRES_DB: geofat
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # roda só na primeira inicialização do volume
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+volumes:
+  pgdata:

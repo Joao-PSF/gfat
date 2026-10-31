@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoFAT · Análise comercial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="geofat.css">
+<script src="geofat.js"></script>
+</head>
+<body>
+<div class="app">
+<main class="principal" style="display:flex;flex-wrap:wrap;overflow:auto">
+  <div style="flex:999 1 520px;min-width:0;height:100%;overflow:auto">
+    <div class="pagina" style="max-width:1100px;gap:20px">
+      <div class="cabeca">
+        <div><h1>Análise comercial</h1><p id="extrato">Carregando…</p></div>
+        <div class="acoes">
+          <button type="button" class="btn" id="importar"></button>
+          <span style="position:relative;display:flex">
+            <button type="button" class="btn" id="exportar" aria-expanded="false"></button>
+            <div class="menu-suspenso" id="menu-exportar" hidden style="left:0">
+              <a id="exp-lista" href="#" download><span style="font-weight:500">CSV desta lista</span><small>os imóveis filtrados abaixo</small></a>
+              <a href="/api/comercial/relatorio.csv" download><span style="font-weight:500">Relatório completo (CSV)</span><small>todas as divergências e imóveis sem matrícula</small></a>
+              <a href="/api/comercial/relatorio.csv?confirmadas=true" download><span style="font-weight:500">Somente confirmadas (CSV)</span><small id="n-confirmadas">decididas como divergência pelo analista</small></a>
+            </div>
+          </span>
+          <a class="btn pri" href="/api/comercial/relatorio.csv" download>Gerar relatório</a>
+        </div>
+      </div>
+
+      <div class="chips" role="group" aria-label="Tipo de divergência" id="tipos"></div>
+
+      <section class="cartao" aria-label="Lista de imóveis" style="overflow:hidden">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 16px;border-bottom:1px solid var(--borda2)">
+          <div class="busca" style="flex:1 1 220px;max-width:340px;height:36px"><label for="q" class="so-leitor">Buscar matrícula, endereço ou número do imóvel</label>
+            <input id="q" type="search" placeholder="Buscar matrícula, endereço ou #imóvel"></div>
+          <div class="seg" role="group" aria-label="Decisão" style="margin-left:auto" id="abas"></div>
+        </div>
+        <div class="rolar-x"><div class="tabela" id="tabela"></div></div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px 16px;padding:12px 16px;font-size:13px;color:var(--mudo)"><span id="rodape"></span>
+          <span style="margin-left:auto">O GeoFAT não altera o GSAN: as decisões ficam aqui e saem no relatório.</span></div>
+      </section>
+    </div>
+  </div>
+  <aside class="painel" aria-label="Detalhe do imóvel" style="flex-basis:380px;height:100%;position:relative" id="detalhe" hidden></aside>
+</main>
+</div>
+<script>
+G.menu('comercial.html');
+const { esc, nf, $, $$, icone } = G;
+const COLS = 'grid-template-columns:minmax(200px,1.6fr) minmax(150px,1.1fr) minmax(180px,1.3fr) 90px 150px';
+const TIPO = { categoria: ['Categoria diferente', 'laranja'], economias: ['Mais unidades que economias', 'roxo'], sem_matricula: ['Sem matrícula', 'erro'],
+               revisar: ['Revisar classificação', 'azul'], inconclusiva: ['Associação inconclusiva', ''] };
+const DECISAO = { confirmada: ['Confirmada', 'var(--ok)'], vistoria: ['Em vistoria', 'var(--azul)'], descartada: ['Descartada', 'var(--mudo)'] };
+let dados = { imoveis: [] }, tipo = 'todos', aba = 'pendentes', selId = +new URLSearchParams(location.search).get('imovel') || null, det = null;
+
+const tipoDe = r => ['sem_correspondencia', 'sem_matricula_confirmada'].includes(r.situacao) ? 'sem_matricula'
+  : r.situacao === 'associacao_inconclusiva' ? 'inconclusiva' : !r.revisado ? 'revisar' : (r.tipo_divergencia || '').includes('categoria') ? 'categoria' : 'economias';
+const cat = c => c ? G.CAT_NOME[c] : '—';
+
+async function carregar() {
+  dados = await G.api('/api/comercial');
+  $('#extrato').textContent = dados.gsan_ligacoes
+    ? `Imóveis em que o extrato do GSAN e o que a IA viu nas fotos não batem. Extrato ${dados.gsan_importado_em ? 'importado em ' + G.dataHora(dados.gsan_importado_em) : 'no banco'} · ${nf(dados.gsan_ligacoes)} ligações · somente consulta.`
+    : 'Nenhum extrato do GSAN importado. Importe o CSV exportado do GSAN para comparar.';
+  $('#n-confirmadas').textContent = `${dados.imoveis.filter(r => r.decisao === 'confirmada').length} imóvel(is) decidido(s) como divergência`;
+  listar();
+  if (selId) abrir(selId);
+}
+
+function filtrados() {
+  const q = $('#q').value.trim().toLowerCase();
+  return dados.imoveis.filter(r => (tipo === 'todos' || tipoDe(r) === tipo)
+    && (aba === 'todas' || (aba === 'pendentes' ? !r.decisao : !!r.decisao))
+    && (!q || [`#${r.id}`, r.id, ...(r.matriculas || []), r.endereco].join(' ').toLowerCase().includes(q)));
+}
+
+function listar() {
+  const conta = k => dados.imoveis.filter(r => k === 'todos' || tipoDe(r) === k).length;
+  $('#tipos').innerHTML = [['todos', 'Todos'], ...Object.entries(TIPO).map(([k, v]) => [k, v[0]])].filter(([k]) => k === 'todos' || conta(k))
+    .map(([k, r]) => `<button type="button" class="chip" aria-pressed="${tipo === k}" data-tipo="${k}">${r}<small>${conta(k)}</small></button>`).join('');
+  $$('[data-tipo]').forEach(b => b.onclick = () => { tipo = b.dataset.tipo; listar(); });
+  $('#abas').innerHTML = [['pendentes', 'Pendentes'], ['decididas', 'Decididas'], ['todas', 'Todas']]
+    .map(([k, r]) => `<button type="button" aria-pressed="${aba === k}" data-aba="${k}">${r}</button>`).join('');
+  $$('[data-aba]').forEach(b => b.onclick = () => { aba = b.dataset.aba; listar(); });
+  const lista = filtrados();
+  $('#tabela').innerHTML = `<div class="lin cab" style="${COLS}"><span>Imóvel</span><span>Divergência</span><span>GSAN → IA</span><span style="text-align:right;padding-right:16px">Confiança</span><span>Situação</span></div>`
+    + (lista.length ? lista.map(r => {
+      const k = tipoDe(r), gsan = !r.revisado ? 'visível após a revisão' : r.matriculas ? `${cat(r.categoria_gsan)}, ${r.economias_gsan} econ.` : 'sem matrícula';
+      return `<button type="button" class="lin" style="${COLS}" data-id="${r.id}" aria-current="${r.id === selId}">
+        <span style="display:flex;flex-direction:column;min-width:0;padding-right:12px"><span class="trunca" style="font-weight:600">Imóvel #${r.id}${r.endereco ? ' · ' + esc(r.endereco) : ''}</span>
+          <span class="mudo trunca" style="font-size:12.5px">${r.matriculas ? 'Matrícula ' + esc(r.matriculas.join(', ')) : 'sem matrícula associada'} · localização ${esc(r.localizacao_confianca)}</span></span>
+        <span><span class="selo ${TIPO[k][1]}" style="font-weight:500">${TIPO[k][0]}</span></span>
+        <span style="font-size:13.5px"><span class="mudo">${esc(gsan)}</span> → <span style="font-weight:600">${cat(r.categoria_final)}${r.unidades_final ? ', ' + r.unidades_final + ' un.' : ''}</span></span>
+        <span class="num" style="text-align:right;padding-right:16px">${r.confianca_ia != null ? Math.round(r.confianca_ia * 100) + '%' : '—'}</span>
+        <span class="ponto" style="color:${r.decisao ? DECISAO[r.decisao][1] : 'var(--laranja)'}">${r.decisao ? DECISAO[r.decisao][0] : G.SITUACAO[r.situacao][0]}</span></button>`;
+    }).join('') : `<div class="vazio">${dados.gsan_ligacoes ? 'Nenhum imóvel com esses filtros.' : 'Importe o extrato do GSAN para ver as divergências.'}</div>`);
+  $$('#tabela [data-id]').forEach(b => b.onclick = () => abrir(+b.dataset.id));
+  $('#rodape').textContent = `${lista.length} imóvel(is) nesta lista`;
+  $('#exp-lista').href = lista.length ? `/api/comercial/relatorio.csv?ids=${lista.map(r => r.id).join(',')}` : '#';
+}
+
+async function abrir(id) {
+  selId = id; listar();
+  try { det = await G.api(`/api/imoveis/${id}`); } catch { $('#detalhe').hidden = true; return; }
+  const d = det, g = d.gsan, r = dados.imoveis.find(x => x.id === id) || {}, k = r.situacao ? tipoDe(r) : null;
+  const b = d.bbox, pc = (v, t) => (v / t * 100) + '%';
+  const evid = (d.evidencias_ia || '').split(/[;.]\s+/).map(s => s.trim()).filter(Boolean);
+  const pode = ['divergencia_confirmada', 'sem_matricula_confirmada'].includes(d.situacao);
+  const p = $('#detalhe');
+  p.hidden = false;
+  p.innerHTML = `<div class="foto-caixa"><img src="/api/fotos/${d.foto_id}/imagem?w=800" alt="Foto da fachada do imóvel ${d.id}">
+      ${b ? `<span class="caixa-fixa" style="left:${pc(b[0], d.largura)};top:${pc(b[1], d.altura)};width:${pc(b[2] - b[0], d.largura)};height:${pc(b[3] - b[1], d.altura)}"></span>` : ''}
+      <button type="button" class="fechar" id="fechar" aria-label="Fechar">${icone('fechar', 14)}</button></div>
+    <div class="bloco" style="gap:18px">
+      <div style="display:flex;flex-direction:column;gap:6px">${k ? `<span class="selo ${TIPO[k][1]}">${TIPO[k][0]}</span>` : ''}
+        <h2 style="font-size:18px;font-weight:700">Imóvel #${d.id}</h2>
+        <span class="mudo" style="font-size:13px">${g?.matriculas ? 'Matrícula ' + esc(g.matriculas.join(', ')) : 'Sem matrícula associada'} · ${G.SITUACAO[d.situacao][0]}</span></div>
+      <div class="comparacao"><div><small>Cadastro GSAN</small><b>${g ? (g.matriculas ? cat(g.categoria_gsan) : 'Sem matrícula') : '—'}</b><small>${g ? (g.matriculas ? g.economias_gsan + ' economia(s)' : '') : 'aparece após revisar a classificação'}</small></div>
+        <div class="ia"><small>Identificado nas fotos${d.revisado_em ? ' (revisado)' : ' (IA)'}</small><b>${cat(d.categoria_final)}</b><small>${d.unidades_final ? d.unidades_final + ' unidade(s) · ' : ''}confiança da IA ${d.confianca_ia != null ? Math.round(d.confianca_ia * 100) + '%' : '—'}</small></div></div>
+      <div style="display:flex;flex-direction:column;gap:8px"><h3 style="margin:0;font-size:14px;font-weight:600">Por que a IA acha isso</h3>
+        ${evid.length ? evid.map(t => `<div class="evidencia"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0B7A75" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span>${esc(t)}</span></div>`).join('') : '<span class="mudo" style="font-size:13px">Sem evidências registradas.</span>'}
+        ${d.limitacoes_ia ? `<span class="mudo" style="font-size:13px">Limitações: ${esc(d.limitacoes_ia)}</span>` : ''}
+        <span class="mudo" style="font-size:12.5px">Modelo: ${esc(d.modelo_ia || '—')} · localização ${esc(G.LOCAL[d.localizacao_confianca])}</span></div>
+      ${!d.revisado_em ? `<div class="aviso-box">Revise a classificação antes de comparar com o GSAN. <a href="revisao.html?foto=${d.foto_id}&imovel=${d.id}">Abrir na revisão de imagens →</a></div>` : `
+      <form id="assoc" style="display:flex;flex-direction:column;gap:8px"><h3 style="margin:0;font-size:14px;font-weight:600">Matrículas do imóvel</h3>
+        <span class="mudo" style="font-size:12.5px">Associação ${esc({ confirmada: 'confirmada pelo revisor', sugerida: 'sugerida automaticamente', inconclusiva: 'inconclusiva', sem_candidato: 'sem ligação perto da fachada' }[g.associacao] || g.associacao)}. Ligações a até 40 m:</span>
+        ${g.candidatas.length ? g.candidatas.map(c => `<label style="display:flex;gap:8px;align-items:baseline;font-size:13px"><input type="checkbox" name="m" value="${esc(c.matricula)}" ${(g.matriculas_confirmadas ?? g.matriculas ?? []).includes(c.matricula) ? 'checked' : ''}>
+          <span>${esc(c.matricula)} · ${cat(c.categoria)} · ${c.economias} econ. · ${c.distancia_m} m · ${esc(c.endereco || '')}</span></label>`).join('') : '<span class="mudo" style="font-size:13px">Nenhuma ligação do GSAN perto.</span>'}
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn peq">Confirmar marcadas</button><button type="button" class="btn peq" id="nenhuma">Nenhuma corresponde</button></div></form>`}
+      ${d.decisao ? `<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--ok-fundo);border-radius:10px;color:var(--ok);font-weight:500">${DECISAO[d.decisao.decisao][0]} em ${G.dataHora(d.decisao.decidida_em)}
+          <button type="button" class="btn fantasma peq" style="margin-left:auto" id="desfazer">Desfazer</button></div>`
+        : `<div style="display:flex;flex-direction:column;gap:8px">
+          <button type="button" class="btn pri" style="height:42px" data-decidir="confirmada" ${pode ? '' : 'disabled'}>Confirmar divergência</button>
+          ${pode ? '' : '<span class="mudo" style="font-size:12.5px">Para confirmar: classificação revisada e matrículas confirmadas (ou "nenhuma corresponde").</span>'}
+          <div style="display:flex;gap:8px"><button type="button" class="btn" style="flex:1" data-decidir="vistoria">Pedir vistoria</button><button type="button" class="btn" style="flex:1" data-decidir="descartada">Descartar</button></div></div>`}
+      ${d.historico.length ? `<div style="display:flex;flex-direction:column;gap:4px"><h3 style="margin:0;font-size:14px;font-weight:600">Histórico</h3>
+        ${d.historico.map(h => `<span class="mudo" style="font-size:12.5px">${G.dataHora(h.em)} · ${esc(h.acao)}${h.dados?.decisao ? ': ' + esc(h.dados.decisao) : h.dados?.categoria ? ': ' + esc(h.dados.categoria) : ''}</span>`).join('')}</div>` : ''}
+      <div style="display:flex;gap:16px;font-size:13.5px;font-weight:600"><a href="mapa.html?imovel=${d.id}" style="text-decoration:none">Ver no mapa →</a><a href="revisao.html?foto=${d.foto_id}&imovel=${d.id}" style="text-decoration:none">Ver foto →</a></div>
+    </div>`;
+  $('#fechar').onclick = () => { selId = null; p.hidden = true; listar(); };
+  const decidir = async (decisao) => { try { await G.api(`/api/imoveis/${id}/decisao`, { decisao }); await carregar(); } catch (e) { alert(e.message); } };
+  $$('[data-decidir]').forEach(b => b.onclick = () => decidir(b.dataset.decidir));
+  if ($('#desfazer')) $('#desfazer').onclick = () => decidir(null);
+  const associar = async m => { try { await G.api(`/api/imoveis/${id}/associacao`, { matriculas: m }); await carregar(); } catch (e) { alert(e.message); } };
+  if ($('#assoc')) { $('#assoc').onsubmit = e => { e.preventDefault(); associar($$('#assoc [name=m]:checked').map(i => i.value)); }; $('#nenhuma').onclick = () => associar([]); }
+}
+
+$('#importar').innerHTML = icone('subir', 15) + 'Importar extrato GSAN';
+$('#importar').onclick = () => G.importarGsan(carregar);
+$('#exportar').innerHTML = 'Exportar divergências' + icone('seta', 14);
+$('#exportar').onclick = () => { const m = $('#menu-exportar'); m.hidden = !m.hidden; $('#exportar').setAttribute('aria-expanded', !m.hidden); };
+$('#q').oninput = listar;
+carregar();
+</script>
+</body>
+</html>

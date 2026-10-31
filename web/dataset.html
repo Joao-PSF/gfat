@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoFAT · Editor de dataset</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="geofat.css">
+<script src="geofat.js"></script>
+<script src="caixas.js"></script>
+</head>
+<body>
+<div class="app">
+<main class="principal coluna">
+  <div class="barra-topo" style="padding:14px 24px;gap:10px 20px">
+    <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+      <a href="treinamento.html" style="display:flex;align-items:center;gap:4px;font-size:12.5px;font-weight:500;text-decoration:none" id="voltar">Treinamento</a>
+      <h1 class="mono" style="font-size:19px;letter-spacing:-0.01em" id="titulo">—</h1>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;min-width:200px">
+      <span style="font-size:13px;color:var(--suave)"><strong style="color:var(--texto)" id="aprovadas">0</strong> de <span id="n-imagens">0</span> aprovadas · <span id="n-classes">0</span> classes · <span id="salvo" class="mudo"></span></span>
+      <span class="trilho fino verde" style="width:220px"><span id="barra-aprov" style="width:0"></span></span>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <button type="button" class="btn peq" id="exportar"></button>
+      <a class="btn pri peq" id="treinar" href="treinamento.html">Treinar com este dataset</a>
+    </div>
+  </div>
+
+  <div class="corpo">
+    <aside class="painel esq" aria-label="Imagens do dataset" style="position:relative;flex-basis:292px;overflow:hidden;min-height:360px">
+      <div style="flex:none;display:flex;flex-direction:column;gap:8px;padding:12px 12px 10px;border-bottom:1px solid var(--borda2)">
+        <div class="busca" style="height:34px;padding:0 10px"><label for="busca-img" class="so-leitor">Buscar imagem</label>
+          <input id="busca-img" type="search" placeholder="Buscar por nome ou classe" style="font-size:13px"></div>
+        <div class="seg" role="group" aria-label="Situação da anotação" id="filtros"></div>
+        <div style="display:flex;gap:6px">
+          <label for="f-conj" class="so-leitor">Conjunto</label>
+          <select id="f-conj" style="flex:1;height:32px;font-size:13px"><option value="">Todos os conjuntos</option><option value="treino">Treino</option><option value="validacao">Validação</option><option value="teste">Teste</option></select>
+          <button type="button" class="btn pri peq" style="height:32px;padding:0 10px" id="adicionar" aria-expanded="false"></button>
+        </div>
+      </div>
+      <div class="menu-suspenso" id="menu-adicionar" style="right:12px;top:128px;width:250px" hidden>
+        <label style="position:relative;cursor:pointer"><span style="font-weight:500">Enviar do computador</span><small>JPG ou PNG, várias de uma vez</small>
+          <input type="file" accept="image/*" multiple id="upload" class="so-leitor"></label>
+        <button type="button" id="abrir-seletor"><span style="font-weight:500">Escolher fotos do GeoFAT</span><small>Fotos já importadas no mapa</small></button>
+      </div>
+      <div style="flex:none;display:flex;padding:8px 14px 4px;font-size:12px;color:var(--mudo)" id="lista-rotulo"></div>
+      <div class="miniaturas" id="lista" style="padding:0 6px 6px"></div>
+      <div style="flex:none;display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-top:1px solid var(--borda2)">
+        <span style="font-size:12.5px;font-weight:600">Divisão do dataset</span>
+        <span style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--trilho)" id="divisao"></span>
+        <span style="display:flex;flex-wrap:wrap;gap:2px 10px;font-size:12px;color:var(--suave)" id="divisao-txt"></span>
+      </div>
+    </aside>
+
+    <section class="area-edicao" aria-label="Área de anotação" tabindex="0" id="area">
+      <div class="vista" id="vista"><div class="palco"></div></div>
+      <div class="ferramentas" role="toolbar" aria-label="Ferramentas" style="left:16px">
+        <span id="ferramentas" style="display:flex;gap:2px"></span>
+        <span style="width:1px;align-self:stretch;margin:6px 4px;background:var(--borda)"></span>
+        <button type="button" id="rotulos" aria-pressed="true" title="Mostrar ou ocultar rótulos">Rótulos</button>
+      </div>
+      <div role="status" id="faixa-sugestoes" hidden style="position:absolute;left:50%;top:14px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:6px 6px 6px 14px;background:#161A1F;border-radius:10px;color:#fff;font-size:13px;box-shadow:0 4px 12px rgba(16,24,40,0.2);white-space:nowrap;z-index:12">
+        <span id="faixa-txt"></span>
+        <button type="button" id="aceitar-todas" style="height:30px;padding:0 12px;background:#3CC2B6;border:0;border-radius:7px;color:#06231F;font-weight:600;cursor:pointer">Aceitar todas</button>
+        <button type="button" id="descartar-todas" style="height:30px;padding:0 10px;background:transparent;border:1px solid #4A525C;border-radius:7px;color:#fff;cursor:pointer">Descartar</button>
+      </div>
+      <div class="ferramentas" style="right:16px">
+        <button type="button" aria-label="Afastar" id="menos"></button><button type="button" id="ajustar" title="Ajustar à tela" style="width:50px;color:var(--suave)">100%</button><button type="button" aria-label="Aproximar" id="mais"></button>
+      </div>
+      <div id="processando" hidden style="position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:rgba(22,26,31,0.28)">
+        <span style="display:flex;flex-direction:column;gap:8px;width:280px;padding:14px 16px;background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(16,24,40,0.2)">
+          <span style="font-weight:600;font-size:13.5px" id="proc-titulo"></span><span id="proc-barra"></span><small class="mudo" id="proc-nota"></small>
+          <button type="button" class="btn peq" id="proc-cancelar">Cancelar</button>
+        </span>
+      </div>
+      <div class="navegacao">
+        <button type="button" class="redondo" id="anterior" aria-label="Imagem anterior"></button>
+        <span class="meio"><span class="mono trunca" style="font-size:13px;font-weight:500;max-width:360px" id="nome-img">—</span><span class="mudo" style="font-size:12.5px" id="pos-img"></span></span>
+        <button type="button" class="redondo" id="proxima" aria-label="Próxima imagem"></button>
+      </div>
+
+      <div role="dialog" aria-label="Escolher fotos do GeoFAT" id="seletor" hidden style="position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;background:#fff">
+        <div style="flex:none;display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--borda)">
+          <span style="display:flex;flex-direction:column"><span style="font-weight:600;font-size:15px">Escolher fotos do GeoFAT</span><span class="mudo" style="font-size:12.5px">Fotos importadas que ainda não estão neste dataset</span></span>
+          <button type="button" class="btn icone" style="margin-left:auto;border:0" id="fechar-seletor" aria-label="Fechar"></button>
+        </div>
+        <div style="flex:1;min-height:0;overflow:auto;padding:16px 20px"><div id="grade-fotos" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px"></div></div>
+        <div style="flex:none;display:flex;align-items:center;gap:10px;padding:12px 20px;border-top:1px solid var(--borda)">
+          <span class="suave" style="font-size:13px" id="escolhidas"></span>
+          <button type="button" class="btn fantasma" style="margin-left:auto;color:var(--suave)" id="cancelar-seletor">Cancelar</button>
+          <button type="button" class="btn pri" id="adicionar-escolhidas">Adicionar</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="painel" aria-label="Anotações e classes" style="flex-basis:328px;overflow:hidden;min-height:460px">
+      <div class="abas" role="tablist" aria-label="Painel" style="flex:none;padding:0 20px" id="abas"></div>
+      <div style="flex:1;min-height:0;overflow:auto" id="painel"></div>
+      <div style="flex:none;display:flex;flex-direction:column;gap:8px;padding:14px 20px 16px;border-top:1px solid var(--borda)">
+        <button type="button" class="btn pri" style="height:42px" id="aprovar">Aprovar e ir para a próxima</button>
+        <span class="mudo" style="text-align:center;font-size:12px">V selecionar · B desenhar · 1–9 classe · Del excluir · A aprovar · ← →</span>
+      </div>
+    </aside>
+  </div>
+</main>
+</div>
+<script>
+G.menu('treinamento.html');
+const { esc, nf, $, $$, icone } = G;
+const PALETA = ['#0E9384', '#D97706', '#9333EA', '#16A34A', '#2563EB', '#475569', '#DC2626', '#CA8A04', '#65A30D', '#DB2777', '#0891B2', '#7C3AED'];
+const ESTADO = { vazia: ['Sem anotação', 'var(--mudo)', ''], revisar: ['Para revisar', 'var(--laranja)', 'laranja'], aprovada: ['Aprovada', 'var(--ok)', 'ok'] };
+const CONJ = { treino: 'Treino', validacao: 'Validação', teste: 'Teste' };
+const ORIGEM = { manual: ['manual', 'var(--mudo)'], aceita: ['revisada', 'var(--ok)'], sugestao: ['sugestão', 'var(--pri-esc)'] };
+const dsId = +new URLSearchParams(location.search).get('id');
+let ds = null, ia = null, atual = null, img = null, caixas = [], sel = null, seq = 0, filtro = 'todas', aba = 'ann', classeAtual = null;
+let sujo = false, salvarTimer = null, salvando = Promise.resolve(), tarefaImagem = null, lote = null, escolhidas = new Set();
+
+const cor = c => PALETA[Math.max(0, ds.classes.indexOf(c)) % PALETA.length];
+const editor = new EditorCaixas($('#vista'), {
+  minimo: 4,
+  aoSelecionar: id => { sel = id; painel(); },
+  aoMudar: (id, bbox) => { const c = caixas.find(x => x.id === id); c.bbox = bbox; if (c.origem === 'sugestao') c.origem = 'aceita'; mudou(); },
+  aoCriar: bbox => { const c = { id: 'k' + seq++, classe: classeAtual || ds.classes[0], bbox, origem: 'manual' }; caixas.push(c); sel = c.id; ferramenta('selecionar'); mudou(); },
+});
+
+function ferramenta(m) {
+  editor.definirModo(m);
+  $('#ferramentas').innerHTML = [['selecionar', 'Selecionar', 'cursor', 'V'], ['desenhar', 'Desenhar', 'caixa', 'B']]
+    .map(([v, r, i, k]) => `<button type="button" aria-pressed="${editor.modo === v}" data-modo="${v}">${icone(i, 16)}${r}<kbd>${k}</kbd></button>`).join('');
+  $$('#ferramentas button').forEach(b => b.onclick = () => ferramenta(b.dataset.modo));
+}
+
+function ordem() {
+  const q = $('#busca-img').value.trim().toLowerCase(), conj = $('#f-conj').value;
+  return ds.imagens.filter(i => (filtro === 'todas' || i.estado === filtro) && (!conj || i.conjunto === conj)
+    && (!q || (i.nome + ' ' + i.classes.join(' ')).toLowerCase().includes(q)));
+}
+
+function cabecalho() {
+  const ap = ds.imagens.filter(i => i.estado === 'aprovada').length, n = ds.imagens.length;
+  $('#titulo').textContent = ds.nome; document.title = `GeoFAT · ${ds.nome}`;
+  $('#aprovadas').textContent = nf(ap); $('#n-imagens').textContent = nf(n); $('#n-classes').textContent = ds.classes.length;
+  $('#barra-aprov').style.width = (n ? ap / n * 100 : 0) + '%';
+  const c = k => ds.imagens.filter(i => i.conjunto === k).length;
+  const t = Math.max(1, n);
+  $('#divisao').innerHTML = `<span style="width:${c('treino') / t * 100}%;background:#0B7A75"></span><span style="width:${c('validacao') / t * 100}%;background:#7CC4BD"></span><span style="width:${c('teste') / t * 100}%;background:#C9E4E1"></span>`;
+  $('#divisao-txt').innerHTML = Object.entries(CONJ).map(([k, v]) => `<span>${v} ${nf(c(k))}</span>`).join('');
+  $('#treinar').href = `treinamento.html?dataset=${dsId}`;
+}
+
+function listar() {
+  const conta = e => e === 'todas' ? ds.imagens.length : ds.imagens.filter(i => i.estado === e).length;
+  $('#filtros').innerHTML = [['todas', 'Todas'], ['vazia', 'Vazias'], ['revisar', 'Revisar'], ['aprovada', 'Aprovadas']]
+    .map(([v, r]) => `<button type="button" aria-pressed="${filtro === v}" data-f="${v}" style="font-size:12px;padding:0 4px">${r} ${conta(v)}</button>`).join('');
+  $$('#filtros button').forEach(b => b.onclick = () => { filtro = b.dataset.f; listar(); });
+  const lista = ordem();
+  $('#lista-rotulo').textContent = `${nf(lista.length)} imagem(ns) nesta lista`;
+  $('#lista').innerHTML = lista.length ? lista.map(i => `<button type="button" class="miniatura" data-id="${i.id}" aria-current="${i.id === atual}">
+      <img src="/api/dataset-imagens/${i.id}/imagem?w=160" alt="" loading="lazy" style="width:68px;height:51px">
+      <span class="txt"><span class="nome mono trunca" style="font-size:12px;font-weight:400">${esc(i.nome)}</span>
+      <span class="ponto" style="font-size:12px;color:${ESTADO[i.estado][1]}">${ESTADO[i.estado][0]}<span class="mudo" style="margin-left:auto">${i.caixas}${i.sugestoes ? ' + ' + i.sugestoes + ' sug.' : ''} caixas</span></span>
+      <span class="mudo" style="font-size:11.5px">${CONJ[i.conjunto]}</span></span></button>`).join('')
+    : '<div class="vazio" style="font-size:13px">Nenhuma imagem com esses filtros. Use <strong>Adicionar</strong> para incluir imagens.</div>';
+  $$('#lista .miniatura').forEach(b => b.onclick = () => abrir(+b.dataset.id));
+}
+
+async function carregarDataset() {
+  ds = await G.api(`/api/datasets/${dsId}`);
+  classeAtual ??= ds.classes[0];
+  cabecalho(); listar();
+}
+
+async function abrir(id) {
+  await salvarAgora();
+  if (!id) { atual = null; img = null; caixas = []; desenhar(); painel(); return; }
+  atual = id;
+  img = await G.api(`/api/dataset-imagens/${id}`);
+  caixas = img.anotacoes.map(a => ({ ...a, id: 'k' + seq++ }));
+  sel = null;
+  editor.carregar(`/api/dataset-imagens/${id}/imagem?w=1600`, img.largura, img.altura, img.nome);
+  const lista = ordem(), pos = lista.findIndex(i => i.id === id);
+  $('#nome-img').textContent = img.nome;
+  $('#pos-img').textContent = `${pos >= 0 ? pos + 1 : '–'} de ${lista.length} · ${CONJ[img.conjunto]}`;
+  desenhar(); painel(); listar();
+}
+
+function rotulos() {
+  const visto = {};
+  return Object.fromEntries(caixas.map(c => { visto[c.classe] = (visto[c.classe] || 0) + 1; return [c.id, visto[c.classe] > 1 ? `${c.classe}_${visto[c.classe]}` : c.classe]; }));
+}
+
+function desenhar() {
+  const r = rotulos();
+  editor.definir(caixas.map(c => ({ id: c.id, bbox: c.bbox, cor: cor(c.classe), tracejada: c.origem === 'sugestao', fundo: c.classe === 'fachada',
+    rotulo: r[c.id] + (c.origem === 'sugestao' ? ` · sugestão ${Math.round((c.score || 0) * 100)}%` : '') })), sel);
+  const sug = caixas.filter(c => c.origem === 'sugestao').length;
+  $('#faixa-sugestoes').hidden = !sug;
+  $('#faixa-txt').textContent = `${sug} sugestão(ões) nesta imagem`;
+  const ap = $('#aprovar');
+  ap.disabled = !img || !!sug;
+  ap.textContent = !img ? 'Aprovar e ir para a próxima' : sug ? 'Aceite ou descarte as sugestões' : caixas.length ? 'Aprovar e ir para a próxima' : 'Aprovar sem caixas (imagem de fundo)';
+}
+
+function painel() {
+  $('#abas').innerHTML = [['ann', 'Anotações'], ['cls', 'Classes']].map(([v, r]) => `<button type="button" role="tab" aria-selected="${aba === v}" data-a="${v}" style="height:44px">${r}</button>`).join('');
+  $$('#abas button').forEach(b => b.onclick = () => { aba = b.dataset.a; painel(); });
+  const p = $('#painel');
+  if (aba === 'cls') {
+    p.innerHTML = `<div style="padding:14px 20px 6px;display:flex;align-items:baseline"><span style="font-weight:600">Classes do dataset</span><span class="mudo" style="margin-left:auto;font-size:12px">caixas salvas</span></div>
+      <div style="padding:0 12px 10px">${ds.classes.map((c, i) => { const n = ds.uso_classes[c] || 0; return `<div style="display:flex;align-items:center;gap:10px;height:40px;padding:0 8px;border-bottom:1px solid var(--linha)">
+        <span class="mono" style="font-size:11.5px;color:var(--fraco);width:14px">${i < 9 ? i + 1 : ''}</span><span class="cor" style="width:12px;height:12px;background:${cor(c)}"></span>
+        <span class="trunca" style="flex:1;font-size:13.5px">${esc(c)}</span><span class="num mudo" style="font-size:12.5px">${nf(n)}</span>
+        <button type="button" class="btn icone" style="width:28px;height:28px;border:0;${n ? 'opacity:.35' : ''}" data-remover="${esc(c)}" ${n ? 'disabled' : ''} aria-label="${n ? 'Classe em uso' : 'Excluir classe ' + esc(c)}" title="${n ? 'Classe em uso, não pode ser excluída' : 'Excluir'}">${icone('lixo', 14)}</button></div>`; }).join('')}</div>
+      <div style="display:flex;gap:8px;padding:6px 20px 8px"><label for="nova-classe" class="so-leitor">Nova classe</label>
+        <input id="nova-classe" type="text" placeholder="nome_da_classe" style="flex:1;height:36px;font-size:13px"><button type="button" class="btn peq" id="add-classe">Adicionar</button></div>
+      <span class="mudo" style="display:block;padding:4px 20px 16px;font-size:12px">Só é possível excluir classes sem caixas. Os números são os atalhos para trocar a classe da caixa selecionada. Use letras minúsculas, números e _.</span>`;
+    $$('[data-remover]').forEach(b => b.onclick = () => mudarClasses(ds.classes.filter(c => c !== b.dataset.remover)));
+    $('#add-classe').onclick = () => { const v = $('#nova-classe').value.trim().toLowerCase(); if (v) mudarClasses([...ds.classes, v]); };
+    return;
+  }
+  const r = rotulos(), detectores = ia ? ia.modelos.filter(m => ia.tipos[m.tipo].etapas.includes('anotacao')) : [];
+  const det = detectores.find(m => m.id === +($('#sg-det')?.value)) || detectores.find(m => m.id === ia?.etapas.anotacao) || detectores[0];
+  const porTexto = det && ia.tipos[det.tipo].busca_por_texto;
+  const vazias = ds.imagens.filter(i => i.estado === 'vazia').map(i => i.id);
+  p.innerHTML = `<div style="display:flex;align-items:center;padding:14px 20px 6px"><span style="font-weight:600">Caixas</span><span class="mudo" style="margin-left:8px;font-size:12.5px">${caixas.length}</span>
+      ${img ? `<span class="selo ${ESTADO[img.estado][2]}" style="margin-left:auto;font-size:12px">${ESTADO[img.estado][0]}</span>` : ''}</div>
+    <div style="padding:0 12px 10px">${caixas.map(c => `<div style="border-radius:8px;background:${c.id === sel ? '#F1F5F5' : 'transparent'}">
+      <div style="display:flex;align-items:center">
+        <button type="button" data-sel="${c.id}" style="flex:1;min-width:0;display:flex;align-items:center;gap:10px;height:36px;padding:0 4px 0 8px;background:transparent;border:0;text-align:left;cursor:pointer">
+          <span style="width:10px;height:10px;border-radius:3px;border:2px ${c.origem === 'sugestao' ? 'dashed' : 'solid'} ${cor(c.classe)};flex:none"></span>
+          <span class="trunca" style="font-size:13.5px">${esc(r[c.id])}</span>
+          <span style="margin-left:auto;font-size:12px;white-space:nowrap;color:${ORIGEM[c.origem][1]}">${ORIGEM[c.origem][0]}${c.origem === 'sugestao' ? ' ' + Math.round((c.score || 0) * 100) + '%' : ''}</span></button>
+        <button type="button" class="btn icone" style="width:30px;height:30px;border:0" data-menu="${c.id}" aria-label="Trocar classe" aria-expanded="${c.id === sel}">${icone('seta', 14)}</button>
+        ${c.origem === 'sugestao' ? `<button type="button" class="btn icone" style="width:30px;height:30px;border:0;color:var(--ok)" data-aceitar="${c.id}" aria-label="Aceitar sugestão" title="Aceitar">${icone('check', 15)}</button>` : ''}
+        <button type="button" class="btn icone" style="width:30px;height:30px;border:0;color:var(--fraco)" data-excluir="${c.id}" aria-label="Excluir caixa" title="Excluir (Del)">${icone('fechar', 14)}</button>
+      </div>
+      ${c.id === sel ? `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:2px 8px 10px 28px">${ds.classes.map((k, i) => `<button type="button" data-classe="${esc(k)}" aria-pressed="${k === c.classe}"
+          style="display:flex;align-items:center;gap:6px;height:28px;padding:0 10px;background:${k === c.classe ? 'var(--pri-fundo)' : '#fff'};border:1.5px solid ${k === c.classe ? 'var(--pri)' : 'var(--borda)'};border-radius:999px;font-size:12.5px;cursor:pointer">
+          <span class="cor" style="width:8px;height:8px;background:${cor(k)}"></span>${esc(k)}${i < 9 ? `<span class="mono" style="font-size:10.5px;color:var(--fraco)">${i + 1}</span>` : ''}</button>`).join('')}</div>` : ''}</div>`).join('')}
+      ${img && !caixas.length ? '<div class="mudo" style="padding:14px 8px;font-size:13px">Esta imagem ainda não tem caixas. Desenhe com <strong>B</strong> ou peça uma sugestão ao detector abaixo.</div>' : ''}
+      ${!img ? '<div class="mudo" style="padding:14px 8px;font-size:13px">Adicione imagens ao dataset para começar.</div>' : ''}
+      <div class="mudo" style="padding:8px 8px 0;font-size:12.5px">Nova caixa entra como <strong>${esc(classeAtual || '')}</strong> (a última classe usada).</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;padding:14px 20px 16px;border-top:1px solid var(--borda2)">
+      <span style="display:flex;align-items:center;gap:8px;font-weight:600"><span style="color:var(--pri)">${icone('brilho', 16)}</span>Sugestão automática</span>
+      <div class="campo" style="gap:4px"><label for="sg-det" style="font-size:12.5px;color:var(--suave);font-weight:400">Detector</label>
+        <select id="sg-det" style="height:34px;font-size:13px">${detectores.map(m => `<option value="${m.id}" ${m.id === det?.id ? 'selected' : ''}>${esc(m.nome)} · ${ia.tipos[m.tipo].busca_por_texto ? 'por descrição' : 'classes do modelo'}${m.situacao === 'pronto' ? '' : ' (' + esc(m.detalhe) + ')'}</option>`).join('')}</select></div>
+      ${porTexto ? `<div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:12.5px;color:var(--suave)">O que procurar para cada classe <span style="color:var(--fraco)">(em inglês funciona melhor)</span></span>
+        ${ds.classes.map(c => `<label style="display:grid;grid-template-columns:96px 1fr;align-items:center;gap:6px;font-size:12px"><span class="mono trunca" style="color:${cor(c)}">${esc(c)}</span>
+          <input type="text" data-texto="${esc(c)}" value="${esc(ds.textos_busca[c] || '')}" style="height:30px;font-size:12.5px"></label>`).join('')}</div>`
+        : det ? `<span class="mudo" style="font-size:12px">Este detector só conhece as classes com que foi treinado; caixas de outras classes são ignoradas.</span>` : '<span class="mudo" style="font-size:12px">Nenhum detector configurado (página Modelos).</span>'}
+      <div class="campo" style="gap:2px"><label for="sg-limiar" style="font-size:12.5px;color:var(--suave);font-weight:400">Confiança mínima: <strong style="color:var(--texto)" id="limiar-txt">${(det?.config.limiar ?? 0.35).toFixed(2).replace('.', ',')}</strong></label>
+        <input id="sg-limiar" type="range" min="10" max="90" value="${Math.round((det?.config.limiar ?? 0.35) * 100)}"></div>
+      <button type="button" class="btn contorno peq" style="height:36px" id="sugerir-uma" ${!img || !det ? 'disabled' : ''}>Sugerir caixas nesta imagem</button>
+      ${lote ? `<span style="display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--suave)" id="lote-prog"></span>`
+        : `<button type="button" class="btn fantasma peq" id="sugerir-lote" ${!vazias.length || !det ? 'disabled' : ''}>Pré-anotar ${vazias.length} imagem(ns) vazia(s)</button>`}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;padding:14px 20px 18px;border-top:1px solid var(--borda2)">
+      <span style="font-weight:600">Conjunto desta imagem</span>
+      <div class="seg" role="group" aria-label="Conjunto">${Object.entries(CONJ).map(([k, v]) => `<button type="button" data-conj="${k}" aria-pressed="${img?.conjunto === k}" ${img ? '' : 'disabled'}>${v}</button>`).join('')}</div>
+      ${img ? `<button type="button" class="btn fantasma peq" style="color:var(--erro);align-self:flex-start;padding:0" id="remover-img">Tirar esta imagem do dataset</button>` : ''}
+    </div>`;
+  $$('[data-sel]').forEach(b => b.onclick = () => { sel = b.dataset.sel; ferramenta('selecionar'); desenhar(); painel(); });
+  $$('[data-menu]').forEach(b => b.onclick = () => { sel = sel === b.dataset.menu ? null : b.dataset.menu; desenhar(); painel(); });
+  $$('[data-aceitar]').forEach(b => b.onclick = () => { caixas.find(c => c.id === b.dataset.aceitar).origem = 'aceita'; mudou(); });
+  $$('[data-excluir]').forEach(b => b.onclick = () => excluir(b.dataset.excluir));
+  $$('[data-classe]').forEach(b => b.onclick = () => trocarClasse(b.dataset.classe));
+  $$('[data-conj]').forEach(b => b.onclick = () => mudarConjunto(b.dataset.conj));
+  $$('[data-texto]').forEach(i => i.onchange = () => { ds.textos_busca[i.dataset.texto] = i.value; G.api(`/api/datasets/${dsId}`, { textos_busca: ds.textos_busca }, 'PATCH'); });
+  $('#sg-det').onchange = painel;
+  $('#sg-limiar').oninput = e => { $('#limiar-txt').textContent = (e.target.value / 100).toFixed(2).replace('.', ','); };
+  $('#sugerir-uma').onclick = () => sugerir([atual]);
+  if ($('#sugerir-lote')) $('#sugerir-lote').onclick = () => sugerir(vazias, true);
+  if ($('#remover-img')) $('#remover-img').onclick = removerImagem;
+  if (lote) acompanharLote();
+}
+
+function mudou() {
+  if (img && img.estado === 'aprovada') img.estado = 'revisar';
+  desenhar(); painel();
+  clearTimeout(salvarTimer);
+  sujo = true;
+  $('#salvo').textContent = 'alterações não salvas';
+  salvarTimer = setTimeout(() => salvarAgora(), 500);
+}
+
+// Autossalvamento: cada mudança grava todas as caixas da imagem no banco
+function salvarAgora(aprovar = false) {
+  clearTimeout(salvarTimer);
+  if (!img || (!aprovar && !sujo)) return salvando;
+  sujo = false;
+  const id = img.id, corpo = { anotacoes: caixas.map(({ classe, bbox, origem, score, modelo }) => ({ classe, bbox, origem, score, modelo })), aprovar };
+  $('#salvo').textContent = 'salvando…';
+  salvando = salvando.then(() => G.api(`/api/dataset-imagens/${id}/anotacoes`, corpo, 'PUT')).then(r => {
+    $('#salvo').textContent = 'salvo';
+    const item = ds.imagens.find(i => i.id === id);
+    if (item) Object.assign(item, { estado: r.estado, caixas: corpo.anotacoes.filter(a => a.origem !== 'sugestao').length,
+      sugestoes: corpo.anotacoes.filter(a => a.origem === 'sugestao').length, classes: [...new Set(corpo.anotacoes.map(a => a.classe))] });
+    if (img?.id === id) img.estado = r.estado;
+    cabecalho(); listar();
+  }).catch(e => { $('#salvo').textContent = 'erro ao salvar'; alert('Não foi possível salvar: ' + e.message); });
+  return salvando;
+}
+
+function excluir(id) { caixas = caixas.filter(c => c.id !== id); if (sel === id) sel = null; mudou(); }
+function trocarClasse(classe) {
+  const c = caixas.find(x => x.id === sel); if (!c) return;
+  c.classe = classe; classeAtual = classe; if (c.origem === 'sugestao') c.origem = 'aceita'; mudou();
+}
+async function mudarConjunto(conj) {
+  await G.api(`/api/dataset-imagens/${img.id}`, { conjunto: conj }, 'PATCH');
+  img.conjunto = conj; ds.imagens.find(i => i.id === img.id).conjunto = conj;
+  $('#pos-img').textContent = $('#pos-img').textContent.replace(/· .*$/, '· ' + CONJ[conj]);
+  cabecalho(); listar(); painel();
+}
+async function mudarClasses(classes) {
+  try { await G.api(`/api/datasets/${dsId}`, { classes }, 'PATCH'); } catch (e) { alert(e.message); return; }
+  await carregarDataset(); if (!ds.classes.includes(classeAtual)) classeAtual = ds.classes[0];
+  desenhar(); painel();
+}
+async function removerImagem() {
+  if (!confirm('Tirar esta imagem do dataset? As caixas dela serão apagadas.')) return;
+  const lista = ordem(), p = lista.findIndex(i => i.id === atual), prox = lista[p + 1] || lista[p - 1];
+  await G.api(`/api/dataset-imagens/${atual}`, undefined, 'DELETE');
+  img = null; await carregarDataset(); abrir(prox && prox.id !== atual ? prox.id : ds.imagens[0]?.id);
+}
+
+async function aprovar() {
+  if ($('#aprovar').disabled) return;
+  await salvarAgora(true);
+  if (ds.imagens.find(i => i.id === atual)?.estado !== 'aprovada') return;
+  const lista = ordem(), p = lista.findIndex(i => i.id === atual);
+  const prox = lista.slice(p + 1).find(i => i.estado !== 'aprovada') || lista.find(i => i.estado !== 'aprovada' && i.id !== atual);
+  if (prox) abrir(prox.id); else listar();
+}
+
+// Sugestão: tarefa real em segundo plano; a barra só mostra percentual quando há total conhecido
+async function sugerir(ids, emLote = false) {
+  await salvarAgora();
+  const modelo_id = +$('#sg-det').value, limiar = $('#sg-limiar').value / 100;
+  let r;
+  try { r = await G.api(`/api/datasets/${dsId}/sugerir`, { imagem_ids: ids, modelo_id, limiar }); } catch (e) { alert(e.message); return; }
+  if (!emLote) { tarefaImagem = { id: r.id, imagem: ids[0] }; acompanharImagem(); }
+  else { lote = r.id; painel(); }
+}
+async function acompanharImagem() {
+  if (!tarefaImagem) return;
+  const t = await G.api(`/api/tarefas/${tarefaImagem.id}`), p = G.progresso(t), fim = ['concluida', 'falhou', 'cancelada'].includes(t.estado);
+  $('#processando').hidden = fim || tarefaImagem.imagem !== atual;
+  $('#proc-titulo').textContent = t.estado === 'fila' ? 'Aguardando na fila…' : `Detectando com ${$('#sg-det').selectedOptions[0]?.text.split(' · ')[0] || 'o detector'}…`;
+  $('#proc-barra').innerHTML = `<div class="trilho fino indet"><span></span></div>`;
+  $('#proc-nota').textContent = [t.mensagem, p.nota].filter(Boolean).join(' · ');
+  $('#proc-cancelar').onclick = () => G.api(`/api/tarefas/${t.id}/cancelar`, {});
+  if (!fim) { setTimeout(acompanharImagem, 1000); return; }
+  const imagem = tarefaImagem.imagem; tarefaImagem = null;
+  if (t.estado === 'falhou') alert('A sugestão falhou: ' + t.mensagem);
+  await carregarDataset();
+  if (imagem === atual) abrir(atual);
+}
+async function acompanharLote() {
+  const el = $('#lote-prog'); if (!el) return;
+  const t = await G.api(`/api/tarefas/${lote}`), p = G.progresso(t), fim = ['concluida', 'falhou', 'cancelada'].includes(t.estado);
+  if (fim) { lote = null; await carregarDataset(); if (t.estado !== 'concluida') alert('Pré-anotação: ' + t.mensagem); abrir(atual); return; }
+  el.innerHTML = `<span style="display:flex"><span>${t.estado === 'fila' ? 'Aguardando na fila…' : 'Pré-anotando imagens vazias…'}</span><span style="margin-left:auto;font-weight:600">${p.rotulo}</span></span>${p.html}<span>${esc(p.nota)}</span>`;
+  clearTimeout(acompanharLote.t); acompanharLote.t = setTimeout(acompanharLote, 1500);
+}
+
+// Adicionar imagens: envio do computador ou fotos já cadastradas
+$('#adicionar').innerHTML = icone('mais', 13) + 'Adicionar';
+$('#adicionar').onclick = () => { const m = $('#menu-adicionar'); m.hidden = !m.hidden; $('#adicionar').setAttribute('aria-expanded', !m.hidden); };
+$('#upload').onchange = async e => {
+  $('#menu-adicionar').hidden = true;
+  const arquivos = [...e.target.files], erros = [];
+  for (const [n, f] of arquivos.entries()) {
+    $('#salvo').textContent = `enviando ${n + 1} de ${arquivos.length}…`;
+    try { await G.enviar(`/api/datasets/${dsId}/imagens?nome=${encodeURIComponent(f.name)}`, f); } catch (err) { erros.push(`${f.name}: ${err.message}`); }
+  }
+  $('#salvo').textContent = `${arquivos.length - erros.length} imagem(ns) enviada(s)`;
+  if (erros.length) alert(erros.join('\n'));
+  e.target.value = '';
+  await carregarDataset(); if (!atual) abrir(ds.imagens[0]?.id);
+};
+$('#abrir-seletor').onclick = async () => {
+  $('#menu-adicionar').hidden = true;
+  const fotos = await G.api('/api/fotos'), ja = new Set(ds.imagens.map(i => i.foto_id));
+  escolhidas = new Set();
+  const livres = fotos.filter(f => !ja.has(f.id));
+  $('#grade-fotos').innerHTML = livres.length ? livres.map(f => `<button type="button" data-foto="${f.id}" aria-pressed="false" style="position:relative;display:flex;flex-direction:column;gap:6px;padding:0;background:transparent;border:0;text-align:left;cursor:pointer">
+      <img src="/api/fotos/${f.id}/imagem?w=300" alt="" loading="lazy" style="width:100%;height:112px;object-fit:cover;border-radius:6px">
+      <span class="marca-sel" style="position:absolute;top:6px;left:6px;width:20px;height:20px;border-radius:5px;background:#fff;border:2px solid var(--campo)"></span>
+      <span class="trunca" style="font-size:12.5px">${esc(f.arquivo.split('/').pop())}</span></button>`).join('') : '<div class="vazio">Todas as fotos do GeoFAT já estão neste dataset.</div>';
+  const atualiza = () => { $('#escolhidas').textContent = `${escolhidas.size} foto(s) escolhida(s)`; $('#adicionar-escolhidas').textContent = escolhidas.size ? `Adicionar ${escolhidas.size}` : 'Adicionar'; $('#adicionar-escolhidas').disabled = !escolhidas.size; };
+  $$('#grade-fotos [data-foto]').forEach(b => b.onclick = () => {
+    const id = +b.dataset.foto, on = !escolhidas.has(id);
+    on ? escolhidas.add(id) : escolhidas.delete(id);
+    b.setAttribute('aria-pressed', on);
+    b.querySelector('img').style.boxShadow = on ? '0 0 0 3px var(--pri)' : 'none';
+    Object.assign(b.querySelector('.marca-sel').style, { background: on ? 'var(--pri)' : '#fff', borderColor: on ? 'var(--pri)' : 'var(--campo)' });
+    atualiza();
+  });
+  atualiza();
+  $('#seletor').hidden = false;
+};
+$('#fechar-seletor').innerHTML = icone('fechar', 15);
+$('#fechar-seletor').onclick = $('#cancelar-seletor').onclick = () => { $('#seletor').hidden = true; };
+$('#adicionar-escolhidas').onclick = async () => {
+  const r = await G.api(`/api/datasets/${dsId}/fotos`, { foto_ids: [...escolhidas] });
+  $('#seletor').hidden = true; $('#salvo').textContent = `${r.adicionadas} foto(s) adicionada(s)`;
+  await carregarDataset(); if (!atual) abrir(ds.imagens[0]?.id);
+};
+
+$('#exportar').innerHTML = icone('baixar', 15) + 'Exportar YOLO';
+$('#exportar').onclick = async () => { await salvarAgora(); const r = await G.api(`/api/datasets/${dsId}/exportar`, {}); G.acompanhar(r.id); };
+$('#voltar').innerHTML = icone('esq', 13) + 'Treinamento';
+$('#aceitar-todas').onclick = () => { caixas.forEach(c => { if (c.origem === 'sugestao') c.origem = 'aceita'; }); mudou(); };
+$('#descartar-todas').onclick = () => { caixas = caixas.filter(c => c.origem !== 'sugestao'); sel = null; mudou(); };
+$('#rotulos').onclick = () => { editor.rotulos = !editor.rotulos; $('#rotulos').setAttribute('aria-pressed', editor.rotulos); editor.render(); };
+$('#aprovar').onclick = aprovar;
+$('#anterior').innerHTML = icone('esq', 15); $('#proxima').innerHTML = icone('dir', 15);
+const ir = passo => { const l = ordem(); if (!l.length) return; const p = l.findIndex(i => i.id === atual); abrir(l[(p + passo + l.length) % l.length].id); };
+$('#anterior').onclick = () => ir(-1); $('#proxima').onclick = () => ir(1);
+$('#menos').innerHTML = icone('menos', 15); $('#mais').innerHTML = icone('mais', 15);
+const zoom = z => { editor.zoom = Math.min(3, Math.max(0.5, z)); editor.ajustar(); $('#ajustar').textContent = Math.round(editor.zoom * 100) + '%'; };
+$('#menos').onclick = () => zoom(editor.zoom - 0.25); $('#mais').onclick = () => zoom(editor.zoom + 0.25); $('#ajustar').onclick = () => zoom(1);
+$('#busca-img').oninput = listar; $('#f-conj').onchange = listar;
+$('#area').addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (e.key === 'ArrowRight') { ir(1); e.preventDefault(); } else if (e.key === 'ArrowLeft') { ir(-1); e.preventDefault(); }
+  else if (k === 'v') ferramenta('selecionar'); else if (k === 'b') ferramenta('desenhar'); else if (k === 'a') aprovar();
+  else if ((e.key === 'Delete' || e.key === 'Backspace') && sel) excluir(sel);
+  else if (/^[1-9]$/.test(e.key) && ds.classes[+e.key - 1]) { if (sel) trocarClasse(ds.classes[+e.key - 1]); else { classeAtual = ds.classes[+e.key - 1]; painel(); } }
+});
+addEventListener('beforeunload', e => { if (sujo) { salvarAgora(); e.preventDefault(); } });
+
+ferramenta('selecionar');
+Promise.all([carregarDataset(), G.api('/api/ia').then(r => { ia = r; })]).then(() => { abrir(ds.imagens[0]?.id); $('#area').focus(); })
+  .catch(e => { $('#painel').innerHTML = `<div class="erro-box" style="margin:20px">Não foi possível abrir o dataset: ${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>

@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoFAT · Modelos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="geofat.css">
+<script src="geofat.js"></script>
+</head>
+<body>
+<div class="app">
+<main class="principal">
+<div class="pagina" style="max-width:1080px">
+  <div class="cabeca">
+    <div><h1>Modelos</h1><p>Escolha qual modelo faz cada etapa da análise das fotos. A troca vale para os próximos processamentos.</p></div>
+    <div class="acoes"><button type="button" class="btn pri" id="adicionar">Adicionar modelo</button></div>
+  </div>
+
+  <section class="cartao pad" aria-labelledby="t-pipeline">
+    <div class="titulo-linha"><h2 id="t-pipeline">Como as fotos são analisadas</h2><span class="mudo" style="font-size:13px" id="salvo"></span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:16px" id="etapas"></div>
+  </section>
+
+  <section class="cartao pad" aria-labelledby="t-amb" style="display:flex;flex-direction:column;gap:14px">
+    <div class="titulo-linha"><h2 id="t-amb">Ambiente de processamento</h2><span class="mudo" style="font-size:13px" id="amb-salvo"></span></div>
+    <p class="mudo" style="margin:0;font-size:13px">Onde rodam o Grounding DINO, o Bonsai e o PaddleOCR. Na GPU remota vão só as imagens (recodificadas, sem GPS) e os parâmetros da inferência; o banco, a planilha e os dados comerciais ficam aqui. YOLO e serviços na nuvem não mudam.</p>
+    <div class="seg" role="group" aria-label="Ambiente" id="amb-opcoes" style="align-self:flex-start"></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:12px;align-items:end">
+      <div class="campo"><label for="amb-url">Endereço do serviço GPU</label><input id="amb-url" type="url" class="mono" style="font-size:12.5px" placeholder="https://POD-ID-8000.proxy.runpod.net"></div>
+      <div class="campo"><label for="amb-token">Token do serviço</label><input id="amb-token" type="password" autocomplete="off"><small id="amb-token-nota"></small></div>
+      <div class="campo"><label for="amb-custo">Custo do pod (US$/hora)</label><input id="amb-custo" type="number" min="0" step="0.01" placeholder="opcional"></div>
+      <div class="campo"><label for="amb-orc">Orçamento (US$)</label><input id="amb-orc" type="number" min="0" step="0.5" placeholder="sem limite"><small>para de enviar trabalho quando o tempo de processamento × custo atinge o valor</small></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <button type="button" class="btn pri" id="amb-gravar">Salvar</button>
+      <button type="button" class="btn" id="amb-testar">Testar conexão</button>
+      <button type="button" class="btn" id="amb-status">Status do serviço</button>
+      <span class="erro-box" id="amb-erro" hidden></span></div>
+    <div id="amb-detalhe" style="display:flex;flex-direction:column;gap:8px;font-size:13px"></div>
+  </section>
+
+  <div class="abas" role="tablist" aria-label="Seções" id="abas"></div>
+  <div id="conteudo"></div>
+</div>
+</main>
+</div>
+<script>
+G.menu('modelos.html');
+const { esc, nf, $, $$, icone } = G;
+const ORDEM = ['deteccao', 'anotacao', 'ocr', 'classificacao'];
+const NOTA_ETAPA = { deteccao: 'Cria um imóvel por fachada encontrada', anotacao: 'Pré-anota imagens no editor de dataset',
+                     ocr: 'Texto do letreiro vai junto para o classificador', classificacao: 'Decide o uso do imóvel a partir da foto' };
+const SIT = { pronto: ['Pronto', ''], nao_instalado: ['Não instalado', 'laranja'], sem_chave: ['Sem chave', 'erro'], sem_conexao: ['Sem conexão', 'erro'], conexao: ['Por conexão', 'azul'] };
+const ICONE_TIPO = { grounding_dino: 'det', yolo: 'det', roboflow: 'nuvem', vlm: 'cerebro', paddleocr: 'texto' };
+let ia = null, aba = new URLSearchParams(location.search).get('aba') || 'meus', aberto = null, novo = false;
+
+const local = m => ['grounding_dino', 'yolo', 'paddleocr'].includes(m.tipo) || m.provedor_local;
+
+async function carregar() {
+  ia = await G.api('/api/ia');
+  etapas(); abas(); conteudo(); ambiente();
+}
+
+let amb = null;
+async function ambiente() {
+  amb = await G.api('/api/processamento');
+  const r = amb.remoto || {};
+  $('#amb-opcoes').innerHTML = [['local', 'Local (este computador)'], ['runpod', 'Runpod GPU']].map(([v, rot]) =>
+    `<button type="button" aria-pressed="${amb.ambiente === v}" data-amb="${v}">${rot}</button>`).join('');
+  $$('[data-amb]').forEach(b => b.onclick = () => { amb.ambiente = b.dataset.amb; $$('[data-amb]').forEach(x => x.setAttribute('aria-pressed', x === b)); });
+  if (document.activeElement?.id?.startsWith('amb-')) return;
+  $('#amb-url').value = r.url || ''; $('#amb-token').value = '';
+  $('#amb-token').placeholder = r.tem_chave ? '•••••• configurado (vazio = manter)' : 'GEOFAT_GPU_TOKEN do pod';
+  $('#amb-token-nota').textContent = r.teste_ok == null ? 'não testado' : `${r.teste_ok ? 'ok' : 'falhou'}: ${r.teste_mensagem} · ${G.dataHora(r.testado_em)}`;
+  $('#amb-custo').value = amb.custo_hora_usd ?? ''; $('#amb-orc').value = amb.orcamento_usd ?? '';
+  const oc = amb.ocorrencias || [];
+  $('#amb-detalhe').innerHTML = oc.length ? `<span style="font-weight:600">Falhas e novas tentativas na GPU remota (desde que o GeoFAT iniciou)</span>` +
+    oc.slice().reverse().map(o => `<span class="mudo">${new Date(o.em * 1000).toLocaleTimeString('pt-BR')} · ${esc(o.onde)} · tentativa ${o.tentativa} · ${esc(o.erro)}${o.desistiu ? ' · desistiu' : ' · vai tentar de novo'}</span>`).join('') : '';
+}
+const ambErro = e => { $('#amb-erro').hidden = !e; $('#amb-erro').textContent = e || ''; };
+async function ambSalvarConexao() {
+  const r = amb.remoto, url = $('#amb-url').value.trim(), token = $('#amb-token').value;
+  if (r && (url !== r.url || token)) await G.api(`/api/ia/provedores/${r.id}`, { url, chave: token || null, local: false }, 'PUT');
+}
+$('#amb-gravar').onclick = async () => {
+  try {
+    await ambSalvarConexao();
+    const num = v => v === '' ? null : +v;
+    await G.api('/api/processamento', { ambiente: amb.ambiente, custo_hora_usd: num($('#amb-custo').value), orcamento_usd: num($('#amb-orc').value) }, 'PUT');
+    ambErro(null); $('#amb-salvo').textContent = 'Salvo · vale para os próximos processamentos'; $('#amb-salvo').style.color = 'var(--ok)';
+    document.activeElement.blur(); ambiente();
+  } catch (e) { ambErro(e.message); }
+};
+$('#amb-testar').onclick = async () => {
+  const b = $('#amb-testar'); b.disabled = true; b.textContent = 'Testando…';
+  try { await ambSalvarConexao(); const t = await G.api(`/api/ia/provedores/${amb.remoto.id}/testar`, {}); ambErro(t.ok ? null : t.mensagem); }
+  catch (e) { ambErro(e.message); }
+  b.disabled = false; b.textContent = 'Testar conexão'; document.activeElement.blur(); ambiente();
+};
+$('#amb-status').onclick = async () => {
+  try {
+    const s = await G.api('/api/processamento/status'), g = s.gpu;
+    const linha = t => `<span class="mudo">${esc(t.tipo)} · ${esc(t.estado)}${t.duracao_s != null ? ` · ${nf(t.duracao_s, 1)} s` : ''}${t.espera_s ? ` · esperou ${nf(t.espera_s, 1)} s` : ''}${t.erro ? ` · <span style="color:var(--erro)">${esc(t.erro)}</span>` : ''}</span>`;
+    ambErro(null);
+    $('#amb-detalhe').innerHTML = `<span><b>${g ? esc(g.nome) : 'Sem GPU (CPU)'}</b>${g ? ` · VRAM livre ${nf(g.vram_livre_gb, 1)} de ${nf(g.vram_total_gb, 1)} GB · CUDA ${esc(g.cuda)}` : ''}${s.carga_sequencial ? ' · um modelo por vez' : ''}</span>
+      <span>Modelos carregados: ${s.modelos_carregados.length ? esc(s.modelos_carregados.join(', ')) : 'nenhum (carregam na primeira chamada)'} · VLM ${esc(s.vlm.alias)}${s.vlm.arquivos ? '' : ' <span style="color:var(--erro)">(GGUF não encontrado no pod)</span>'} · OCR ${s.ocr_disponivel ? 'disponível' : 'não instalado'}</span>
+      <span>Em execução: ${s.em_execucao.length} · na fila: ${s.na_fila.length} · concluídos ${s.contadores.concluido || 0} · falhas ${s.contadores.falhou || 0}</span>
+      ${[...s.em_execucao, ...s.na_fila, ...s.recentes.slice().reverse().slice(0, 8)].map(linha).join('')}`;
+  } catch (e) { ambErro(e.message); }
+};
+
+function etapas() {
+  $('#etapas').innerHTML = ORDEM.map((e, i) => {
+    const opcoes = ia.modelos.filter(m => ia.tipos[m.tipo].etapas.includes(e));
+    const m = ia.modelos.find(x => x.id === ia.etapas[e]);
+    return `<div style="display:flex;flex-direction:column;gap:8px">
+      <span style="display:flex;align-items:center;gap:8px;font-weight:600"><span style="width:24px;height:24px;border-radius:50%;background:var(--pri-fundo);color:var(--pri-esc);display:grid;place-items:center;font-size:12.5px;font-weight:700">${i + 1}</span>${ia.etapas_nomes[e]}</span>
+      <label for="etapa-${e}" class="so-leitor">Modelo da etapa ${ia.etapas_nomes[e]}</label>
+      <select id="etapa-${e}" data-etapa="${e}">${e === 'ocr' ? `<option value="" ${m ? '' : 'selected'}>Não usar</option>` : ''}
+        ${opcoes.map(o => `<option value="${o.id}" ${o.id === ia.etapas[e] ? 'selected' : ''}>${esc(o.nome)}${local(o) ? '' : ' (nuvem)'}</option>`).join('')}</select>
+      <span class="mudo" style="font-size:12.5px">${m && !local(m) ? '<span style="color:var(--laranja)">As imagens saem do computador (sem o GPS).</span>' : NOTA_ETAPA[e]}</span></div>`;
+  }).join('');
+  $$('[data-etapa]').forEach(s => s.onchange = async () => {
+    try { await G.api('/api/ia/etapas', { etapa: s.dataset.etapa, modelo_id: s.value ? +s.value : null }); $('#salvo').textContent = 'Alteração salva · vale para os próximos processamentos'; $('#salvo').style.color = 'var(--ok)'; }
+    catch (e) { alert(e.message); }
+    carregar();
+  });
+}
+
+function abas() {
+  $('#abas').innerHTML = [['meus', 'Seus modelos'], ['catalogo', 'Catálogo'], ['conexoes', 'Conexões']]
+    .map(([v, r]) => `<button type="button" role="tab" aria-selected="${aba === v}" data-aba="${v}">${r}</button>`).join('');
+  $$('[data-aba]').forEach(b => b.onclick = () => { aba = b.dataset.aba; abas(); conteudo(); });
+}
+
+function campos(tipo, c = {}, provedor_id = null) {
+  const prov = ia.tipos[tipo].provedor, opts = ia.provedores.filter(p => p.tipo === prov);
+  const linha = (rot, html, nota = '') => `<div class="campo"><span class="rot" style="font-weight:400;color:var(--suave)">${rot}</span>${html}${nota ? `<small>${nota}</small>` : ''}</div>`;
+  let h = '';
+  if (prov) h += linha('Conexão', `<select data-c="provedor_id">${opts.map(p => `<option value="${p.id}" ${p.id === provedor_id ? 'selected' : ''}>${esc(p.nome)}${p.local ? '' : ' (nuvem)'}</option>`).join('')}</select>`);
+  if (['grounding_dino', 'vlm', 'roboflow'].includes(tipo))
+    h += linha(tipo === 'roboflow' ? 'Modelo (projeto/versão)' : tipo === 'vlm' ? 'Id do modelo no servidor' : 'Modelo (Hugging Face ou pasta local)',
+      `<input type="text" data-c="modelo" value="${esc(c.modelo || '')}" class="mono" style="font-size:13px">`,
+      tipo === 'vlm' ? 'o mesmo nome que o servidor lista em /models (o GeoFAT confere antes de classificar)' : '');
+  if (tipo === 'yolo') h += linha('Pesos (relativo ao projeto)', `<input type="text" data-c="pesos" value="${esc(c.pesos || '')}" class="mono" style="font-size:13px">`);
+  if (['grounding_dino', 'yolo', 'roboflow'].includes(tipo)) {
+    const v = Math.round((c.limiar ?? 0.35) * 100);
+    h += `<div class="campo"><label style="font-size:13px;color:var(--suave);font-weight:400">Confiança mínima: <strong style="color:var(--texto)" class="limiar-txt">${(v / 100).toFixed(2).replace('.', ',')}</strong></label>
+      <input type="range" min="10" max="90" value="${v}" data-c="limiar"><small>caixas abaixo disso são ignoradas</small></div>`;
+  }
+  if (tipo === 'grounding_dino') h += linha('Texto de busca da fachada', `<input type="text" data-c="prompt" value="${esc(c.prompt || 'building facade.')}">`, 'em inglês funciona melhor');
+  if (tipo === 'vlm') h += linha('Parâmetros extras (JSON)', `<textarea rows="4" data-c="parametros" class="mono" style="font-size:12px">${esc(JSON.stringify(c.parametros || {}, null, 1))}</textarea>`, 'amostragem e opções do servidor; o Bonsai usa o modo sem raciocínio');
+  if (tipo === 'paddleocr') h += linha('Idioma', `<input type="text" data-c="idioma" value="${esc(c.idioma || 'pt')}">`);
+  if (tipo === 'yolo' && c.classes) h += linha('Classes do treino', `<span style="font-size:13px">${esc(c.classes.join(', '))}</span>`);
+  return h;
+}
+
+function lerCampos(raiz, tipo, base = {}) {
+  const c = { ...base }; let provedor_id = null;
+  $$('[data-c]', raiz).forEach(el => {
+    const k = el.dataset.c;
+    if (k === 'provedor_id') provedor_id = +el.value;
+    else if (k === 'limiar') c.limiar = el.value / 100;
+    else if (k === 'parametros') c.parametros = JSON.parse(el.value || '{}');
+    else c[k] = el.value.trim();
+  });
+  return { config: c, provedor_id };
+}
+
+function conteudo() {
+  const el = $('#conteudo');
+  if (aba === 'catalogo') {
+    el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:16px">${ia.catalogo.map(c => {
+      const t = c.tarefa, baixando = t && ['fila', 'executando'].includes(t.estado), p = t ? G.progresso(t) : null;
+      return `<div class="cartao" style="display:flex;flex-direction:column;gap:10px;padding:18px">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-weight:600">${esc(c.nome)}</span><span class="selo" style="margin-left:auto;font-size:12px;font-weight:500">${esc(c.etapa)}</span></div>
+        <span class="suave" style="font-size:13px;flex:1">${esc(c.descricao)}</span><span class="mudo" style="font-size:12.5px">${esc(c.tamanho)}</span>
+        ${c.instalado ? `<span style="height:36px;display:flex;align-items:center;gap:6px;color:var(--ok);font-weight:600">${icone('check', 16)}Instalado</span>`
+          : baixando ? `<span style="display:flex;flex-direction:column;gap:6px"><span style="display:flex;font-size:13px;color:var(--suave)"><span>${t.estado === 'fila' ? 'Na fila…' : 'Baixando…'}</span><span style="margin-left:auto;font-weight:600;color:var(--texto)">${p.rotulo}</span></span>${p.html}<small class="mudo">${esc(p.nota)}</small>
+              <button type="button" class="btn peq perigo" data-cancelar="${t.id}">Cancelar (o que já baixou fica guardado)</button></span>`
+          : `${t && t.estado === 'falhou' ? `<span class="erro-box" style="font-size:12.5px">${esc(t.mensagem)}</span>` : ''}
+             <button type="button" class="btn peq" data-instalar="${c.chave}">${t && ['falhou', 'cancelada'].includes(t.estado) ? 'Continuar download' : 'Instalar'}</button>`}
+      </div>`;
+    }).join('')}</div>
+    <p class="mudo" style="font-size:13px">Downloads vão para a pasta <span class="mono">modelos/</span>, com conferência do SHA-256 publicado no Hugging Face. Um download interrompido continua de onde parou.</p>`;
+    $$('[data-instalar]').forEach(b => b.onclick = async () => { await G.api(`/api/ia/catalogo/${b.dataset.instalar}/instalar`, {}); carregar(); });
+    $$('[data-cancelar]').forEach(b => b.onclick = async () => { await G.api(`/api/tarefas/${b.dataset.cancelar}/cancelar`, {}); carregar(); });
+    return;
+  }
+  if (aba === 'conexoes') {
+    const s = ia.servidor_local;
+    el.innerHTML = `<div class="cartao lista" style="overflow:hidden">${ia.provedores.map(p => `<div style="display:flex;flex-direction:column;gap:12px;padding:16px 20px" data-prov="${p.id}">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px">
+          <span style="flex:1 1 240px;display:flex;flex-direction:column"><span style="font-weight:600">${esc(p.nome)} <span class="selo ${p.local ? 'pri' : 'azul'}" style="font-size:11.5px;margin-left:4px">${p.local ? 'local' : 'nuvem'}</span></span>
+            <span class="mudo" style="font-size:13px">${{ openai: 'API compatível com a OpenAI', roboflow: 'Inferência hospedada', huggingface: 'Download de modelos (token opcional)', mapillary: 'Fotos de rua (Client Token), usadas no Treinamento e na análise direcionada', gpu_remota: 'Serviço GPU do GeoFAT (Runpod); veja Ambiente de processamento' }[p.tipo]}</span></span>
+          <span class="ponto" style="width:260px;color:${p.teste_ok == null ? 'var(--mudo)' : p.teste_ok ? 'var(--ok)' : 'var(--erro)'}">${p.teste_ok == null ? 'Não testado' : esc(p.teste_mensagem)}${p.testado_em ? ` · ${G.dataHora(p.testado_em)}` : ''}</span>
+          <button type="button" class="btn peq" data-testar="${p.id}">Testar conexão</button></div>
+        <div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1.4fr) auto auto;gap:10px;align-items:end">
+          <div class="campo"><label for="url-${p.id}" style="font-weight:400;color:var(--suave)">Endereço</label><input id="url-${p.id}" type="url" value="${esc(p.url)}" class="mono" style="font-size:12.5px"></div>
+          <div class="campo"><label for="chave-${p.id}" style="font-weight:400;color:var(--suave)">Chave de API</label><input id="chave-${p.id}" type="password" autocomplete="off" placeholder="${p.tem_chave ? '•••••• configurada (deixe vazio para manter)' : 'sem chave'}"></div>
+          <label class="interruptor" style="min-height:38px"><input type="checkbox" id="local-${p.id}" ${p.local ? 'checked' : ''}><span class="trilho-int"></span><span style="font-size:13px">roda neste computador</span></label>
+          <span style="display:flex;gap:6px">${p.tem_chave ? `<button type="button" class="btn peq fantasma" style="color:var(--erro)" data-tirar="${p.id}">Remover chave</button>` : ''}<button type="button" class="btn peq" data-salvar="${p.id}">Salvar</button></span>
+        </div>
+        ${p.nome === 'Bonsai local (llama-server)' && s ? `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 14px;background:var(--fundo);border-radius:10px">
+          <span style="display:flex;flex-direction:column;flex:1 1 260px"><span style="font-weight:600;font-size:13.5px">Servidor local (llama.cpp)</span>
+            <span class="ponto" style="font-size:13px;color:${s.respondendo ? 'var(--ok)' : 'var(--mudo)'}">${s.respondendo ? `Respondendo${s.modelo ? ' · ' + esc(s.modelo) : ' (iniciado fora do GeoFAT)'}` : s.gerenciado ? 'Carregando o modelo…' : s.executavel ? 'Parado' : 'llama-server não encontrado em ferramentas/'}</span></span>
+          <label for="gguf" class="so-leitor">Modelo GGUF</label>
+          <select id="gguf" style="height:34px;font-size:13px" ${s.modelos.length ? '' : 'disabled'}>${s.modelos.map(m => `<option ${m === s.modelo ? 'selected' : ''}>${esc(m)}</option>`).join('') || '<option>nenhum GGUF com mmproj em modelos/</option>'}</select>
+          <button type="button" class="btn peq pri" id="iniciar-srv" ${s.executavel && s.modelos.length ? '' : 'disabled'}>${s.gerenciado ? 'Reiniciar' : 'Iniciar'}</button>
+          ${s.gerenciado ? '<button type="button" class="btn peq" id="parar-srv">Parar</button>' : ''}
+          <span class="mudo" style="font-size:12px;flex-basis:100%">Carregar o Bonsai 2 9B leva cerca de 1 minuto. Argumentos fixos (Vulkan, sem reset da GPU); saída em data/logs/llama-server.log.</span></div>` : ''}
+      </div>`).join('')}
+      <p style="margin:0;padding:14px 20px;font-size:13px;color:var(--mudo)">As chaves ficam só no servidor do GeoFAT e não voltam para o navegador. Fotos enviadas para serviços na nuvem saem recortadas e recodificadas, sem a localização GPS.</p></div>`;
+    $$('[data-testar]').forEach(b => b.onclick = async () => { b.disabled = true; b.textContent = 'Testando…'; await G.api(`/api/ia/provedores/${b.dataset.testar}/testar`, {}).catch(e => alert(e.message)); carregar(); });
+    const salvar = async (id, chave) => {
+      try { await G.api(`/api/ia/provedores/${id}`, { url: $(`#url-${id}`).value.trim(), chave, local: $(`#local-${id}`).checked }, 'PUT'); carregar(); }
+      catch (e) { alert(e.message); }
+    };
+    $$('[data-salvar]').forEach(b => b.onclick = () => salvar(b.dataset.salvar, $(`#chave-${b.dataset.salvar}`).value || null));
+    $$('[data-tirar]').forEach(b => b.onclick = () => { if (confirm('Remover a chave desta conexão?')) salvar(b.dataset.tirar, ''); });
+    if ($('#iniciar-srv')) $('#iniciar-srv').onclick = async () => { try { await G.api('/api/ia/servidor-local', { modelo: $('#gguf').value }); } catch (e) { alert(e.message); } carregar(); };
+    if ($('#parar-srv')) $('#parar-srv').onclick = async () => { await G.api('/api/ia/servidor-local', { modelo: null }); carregar(); };
+    return;
+  }
+  const form = novo ? `<div class="cartao pad" style="border-color:#A9D4D0;display:flex;flex-direction:column;gap:14px;margin-bottom:16px" id="form-novo">
+      <div style="display:flex;align-items:center"><h2>Adicionar modelo</h2><button type="button" class="btn icone" style="margin-left:auto;border:0" id="fechar-novo" aria-label="Fechar">${icone('fechar', 14)}</button></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:14px">
+        <div class="campo"><label for="novo-nome">Nome</label><input id="novo-nome" type="text" placeholder="ex.: Qwen2.5-VL no OpenRouter"></div>
+        <div class="campo"><label for="novo-tipo">Tipo</label><select id="novo-tipo">${Object.entries(ia.tipos).map(([k, t]) => `<option value="${k}">${esc(t.nome)}</option>`).join('')}</select><small id="novo-desc"></small></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:14px" id="novo-campos"></div>
+      <div style="display:flex;gap:8px;align-items:center"><button type="button" class="btn pri" id="criar">Adicionar</button><span class="erro-box" id="novo-erro" hidden></span></div></div>` : '';
+  el.innerHTML = form + `<div class="cartao lista" style="overflow:hidden">${ia.modelos.map(m => {
+    const usos = m.etapas.map(e => ia.etapas_nomes[e]), st = usos.length ? ['Em uso', 'ok'] : SIT[m.situacao] || ['—', ''];
+    const desc = [ia.tipos[m.tipo].nome, m.provedor_nome, m.config.modelo || m.config.pesos].filter(Boolean).join(' · ');
+    return `<div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;padding:16px 20px">
+        <span class="icone-tile ${local(m) ? '' : 'nuvem'}">${icone(ICONE_TIPO[m.tipo], 20)}</span>
+        <span style="flex:1 1 220px;display:flex;flex-direction:column;min-width:0"><span style="font-weight:600">${esc(m.nome)}</span><span class="mudo trunca" style="font-size:13px">${esc(desc)}</span></span>
+        <span style="width:170px;font-size:13px;color:var(--suave)">${m.map50 != null ? `mAP50 ${nf(m.map50 * 100, 1)}% (validação)` : esc(m.detalhe)}</span>
+        <span style="width:170px;display:flex;flex-direction:column;gap:4px"><span class="selo ${st[1]}">${st[0]}</span>${usos.length ? `<span class="mudo" style="font-size:12px">${esc(usos.join(', '))}</span>` : ''}</span>
+        <button type="button" class="btn peq" data-abrir="${m.id}" aria-expanded="${aberto === m.id}">${aberto === m.id ? 'Fechar' : 'Configurar'}</button></div>
+      ${aberto === m.id ? `<div style="display:flex;flex-direction:column;gap:14px;padding:4px 20px 20px 76px" data-form="${m.id}">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:14px">
+          <div class="campo"><span class="rot" style="font-weight:400;color:var(--suave)">Nome</span><input type="text" data-nome value="${esc(m.nome)}"></div>${campos(m.tipo, m.config, m.provedor_id)}</div>
+        <div style="display:flex;gap:8px;align-items:center"><button type="button" class="btn peq pri" data-gravar="${m.id}">Salvar</button>
+          <button type="button" class="btn peq fantasma" style="color:var(--erro)" data-excluir="${m.id}" ${usos.length ? 'disabled title="Em uso numa etapa"' : ''}>Excluir</button><span class="erro-box" hidden></span></div></div>` : ''}</div>`;
+  }).join('')}</div>`;
+  $$('[data-abrir]').forEach(b => b.onclick = () => { aberto = aberto === +b.dataset.abrir ? null : +b.dataset.abrir; conteudo(); });
+  $$('input[type=range][data-c=limiar]').forEach(r => r.oninput = () => { r.closest('.campo').querySelector('.limiar-txt').textContent = (r.value / 100).toFixed(2).replace('.', ','); });
+  $$('[data-gravar]').forEach(b => b.onclick = async () => {
+    const m = ia.modelos.find(x => x.id === +b.dataset.gravar), raiz = $(`[data-form="${m.id}"]`), erro = raiz.querySelector('.erro-box');
+    try {
+      const { config, provedor_id } = lerCampos(raiz, m.tipo, m.config);
+      await G.api(`/api/ia/modelos/${m.id}`, { nome: raiz.querySelector('[data-nome]').value.trim(), tipo: m.tipo, provedor_id, config }, 'PUT');
+      aberto = null; carregar();
+    } catch (e) { erro.hidden = false; erro.textContent = e instanceof SyntaxError ? 'Parâmetros: JSON inválido' : e.message; }
+  });
+  $$('[data-excluir]').forEach(b => b.onclick = async () => { if (confirm('Excluir este modelo? Os arquivos baixados continuam na pasta modelos/.')) { await G.api(`/api/ia/modelos/${b.dataset.excluir}`, undefined, 'DELETE').catch(e => alert(e.message)); carregar(); } });
+  if (novo) {
+    const tipo = $('#novo-tipo'), redesenha = () => { $('#novo-desc').textContent = ia.tipos[tipo.value].descricao; $('#novo-campos').innerHTML = campos(tipo.value); };
+    tipo.onchange = redesenha; redesenha();
+    $('#fechar-novo').onclick = () => { novo = false; conteudo(); };
+    $('#criar').onclick = async () => {
+      try {
+        const { config, provedor_id } = lerCampos($('#novo-campos'), tipo.value);
+        await G.api('/api/ia/modelos', { nome: $('#novo-nome').value.trim(), tipo: tipo.value, provedor_id, config });
+        novo = false; carregar();
+      } catch (e) { $('#novo-erro').hidden = false; $('#novo-erro').textContent = e instanceof SyntaxError ? 'Parâmetros: JSON inválido' : e.message; }
+    };
+  }
+}
+
+$('#adicionar').onclick = () => { aba = 'meus'; novo = true; abas(); conteudo(); $('#novo-nome')?.focus(); };
+carregar();
+// Enquanto houver download ou o servidor local estiver subindo, atualiza sozinho
+setInterval(() => {
+  const ativo = ia && (ia.catalogo.some(c => c.tarefa && ['fila', 'executando'].includes(c.tarefa.estado)) || (ia.servidor_local?.gerenciado && !ia.servidor_local.respondendo));
+  if (ativo && !document.activeElement?.matches('input,select,textarea')) carregar();
+}, 2000);
+</script>
+</body>
+</html>

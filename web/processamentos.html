@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoFAT · Processamentos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="geofat.css">
+<script src="geofat.js"></script>
+</head>
+<body>
+<div class="app">
+<main class="principal">
+<div class="pagina" style="max-width:980px">
+  <div class="cabeca">
+    <div><h1>Processamentos</h1><p id="resumo">Carregando…</p></div>
+    <div class="acoes"><button type="button" class="btn" id="abrir-dir">Análise direcionada</button><button type="button" class="btn pri" id="nova">Nova tarefa</button></div>
+  </div>
+
+  <section class="cartao pad" id="form" hidden aria-labelledby="t-nova" style="border-color:#A9D4D0;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center"><h2 id="t-nova">Nova tarefa</h2><button type="button" class="btn icone" style="margin-left:auto;border:0" id="fechar" aria-label="Fechar"></button></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:16px">
+      <div class="campo"><label for="tipo">Tarefa</label>
+        <select id="tipo">
+          <option value="importar_fotos">Importar fotos de data/fotos</option>
+          <option value="importar_edificacoes">Importar polígonos de edificações</option>
+          <option value="detectar">Detectar fachadas nas fotos novas</option>
+          <option value="localizar">Localizar fachadas e associar às edificações</option>
+          <option value="classificar">Classificar imóveis ainda sem categoria</option>
+          <option value="ler_enderecos">Ler números de endereço (OCR)</option>
+        </select></div>
+      <div class="campo" data-p="pasta"><label for="pasta">Subpasta em data/fotos</label><input id="pasta" type="text" placeholder="vazio = todas"></div>
+      <div class="campo" data-p="fonte-foto"><label for="fonte-foto">Origem das fotos</label><select id="fonte-foto"><option value="existente">Existentes</option><option value="captura_propria">Captura própria</option></select></div>
+      <div class="campo" data-p="fonte-edif"><label for="fonte-edif">Fonte</label><select id="fonte-edif"><option value="osm">OpenStreetMap</option><option value="open_buildings">Google Open Buildings</option></select></div>
+      <div class="campo" data-p="limite"><label for="limite">Limite</label><input id="limite" type="number" min="1" placeholder="sem limite"><small>processa só as primeiras N</small></div>
+    </div>
+    <p class="mudo" style="margin:0;font-size:13px" id="explica"></p>
+    <div style="display:flex;gap:8px;align-items:center"><button type="button" class="btn pri" id="enfileirar">Colocar na fila</button><span id="erro" class="erro-box" hidden></span></div>
+  </section>
+
+  <section class="cartao pad" id="dir" hidden aria-labelledby="t-dir" style="display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;gap:8px"><h2 id="t-dir">Análise direcionada</h2><span class="selo" id="dir-amb"></span>
+      <button type="button" class="btn icone" style="margin-left:auto;border:0" id="fechar-dir" aria-label="Fechar"></button></div>
+    <p class="mudo" style="margin:0;font-size:13px">Procura imóveis de uma planilha nas fotos do Mapillary e passa só essas fotos pela detecção, associação e Bonsai. Da planilha ficam só matrícula, coordenada e localidade; a IA recebe só o recorte da foto. Foto perto do imóvel não confirma nada: o resultado é uma sugestão para a Revisão.</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <h3 style="margin:0;font-size:14px">1. Alvos da planilha</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:12px;align-items:end">
+        <div class="campo"><label for="d-qtd">Quantidade</label><input id="d-qtd" type="number" min="1" max="50" value="3"><small>no máximo 50 por vez</small></div>
+        <div class="campo"><label for="d-semente">Sorteio (semente)</label><input id="d-semente" type="number" min="0" value="1"><small>mesma semente, mesmos alvos</small></div>
+        <div class="campo"><label for="d-local">Localidade</label><input id="d-local" type="text" placeholder="todas"></div>
+        <div class="campo"><label for="d-matr">Matrículas</label><input id="d-matr" type="text" placeholder="opcional, separadas por vírgula"></div>
+      </div>
+      <label class="interruptor"><input type="checkbox" id="d-foto" checked><span class="trilho-int"></span><span style="font-size:13px">só alvos com imagem do Mapillary a até 60 m</span></label>
+      <div><button type="button" class="btn" id="d-enviar">Escolher planilha (.xlsx ou .csv)…</button> <span class="mudo" style="font-size:13px" id="d-imp"></span></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <h3 style="margin:0;font-size:14px">2. Analisar</h3>
+      <div class="cartao lista" style="overflow:auto;max-height:260px" id="d-alvos"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:12px;align-items:end">
+        <div class="campo"><label for="d-fotos">Fotos por alvo</label><input id="d-fotos" type="number" min="1" max="10" value="3"></div>
+        <div class="campo"><label for="d-raio">Raio da busca (m)</label><input id="d-raio" type="number" min="15" max="100" value="60"></div>
+        <div class="campo"><label for="d-tempo">Tempo máximo (min)</label><input id="d-tempo" type="number" min="1" placeholder="sem limite"></div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px 18px">
+        <label class="interruptor"><input type="checkbox" id="d-verif" checked><span class="trilho-int"></span><span style="font-size:13px">Bonsai confere se a caixa é uma fachada só</span></label>
+        <label class="interruptor"><input type="checkbox" id="d-repro"><span class="trilho-int"></span><span style="font-size:13px">reprocessar alvos já analisados neste ambiente (para comparar)</span></label>
+      </div>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px"><input type="checkbox" id="d-lic" style="margin-top:3px"><span>Verifiquei as condições de uso das imagens do Mapillary (CC BY-SA 4.0, atribuição, sem reidentificação; <a href="https://www.mapillary.com/terms" target="_blank" rel="noopener">termos</a>).</span></label>
+      <div style="display:flex;gap:8px;align-items:center"><button type="button" class="btn pri" id="d-analisar">Analisar selecionados</button><span class="erro-box" id="d-erro" hidden></span></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <h3 style="margin:0;font-size:14px">3. Execuções</h3>
+      <span class="mudo" style="font-size:13px" id="d-med"></span>
+      <div style="display:flex;flex-direction:column;gap:12px" id="d-execs"></div>
+      <div id="d-comp"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="t-and" style="display:flex;flex-direction:column;gap:10px">
+    <h2 id="t-and" class="titulo2">Em andamento</h2>
+    <div class="cartao lista" style="overflow:hidden" id="rodando"></div>
+  </section>
+  <section aria-labelledby="t-fila" style="display:flex;flex-direction:column;gap:10px">
+    <h2 id="t-fila" class="titulo2">Na fila</h2>
+    <div class="cartao lista" style="overflow:hidden" id="fila"></div>
+  </section>
+  <section aria-labelledby="t-hist" style="display:flex;flex-direction:column;gap:10px">
+    <h2 id="t-hist" class="titulo2">Histórico <span class="mudo" style="font-weight:400;font-size:13px">· o log mostra as últimas linhas</span></h2>
+    <div class="cartao lista" style="overflow:hidden" id="historico"></div>
+  </section>
+</div>
+</main>
+</div>
+<script>
+G.menu('processamentos.html');
+const { esc, nf, $, $$, icone } = G;
+const ICONE = { classificar: 'cerebro', detectar: 'det', baixar_modelo: 'baixar', importar_gsan: 'sync', importar_fotos: 'subir', importar_edificacoes: 'mapa',
+                localizar: 'alvo', ler_enderecos: 'texto', treinar: 'treino', exportar_dataset: 'baixar', sugerir_anotacoes: 'brilho',
+                analisar_alvos: 'alvo', importar_alvos: 'subir' };
+const FILA = { computacao: 'processamento (uma por vez)', rede: 'downloads e importações', interativa: 'interativa' };
+const EXPLICA = {
+  importar_fotos: 'Lê GPS, direção e data do EXIF (ou do coordenadas.csv) das fotos novas.',
+  importar_edificacoes: 'Baixa os polígonos da área das fotos e recalcula a localização das fachadas.',
+  detectar: 'Usa o detector escolhido em Modelos (etapa "Encontrar a fachada") nas fotos que ainda não passaram pela detecção.',
+  localizar: 'Refaz trajetórias (sentido do deslocamento, lado da via), edificações candidatas de cada fachada e grupos sugeridos de fotos do mesmo imóvel. Posições e grupos definidos pelo revisor não mudam.',
+  ler_enderecos: 'Usa o modelo da etapa OCR (Modelos) nas fachadas ainda sem texto lido e procura números de endereço. Cada número entra pendente de revisão, com o endereço candidato do CNEFE/OSM.',
+  classificar: 'Usa o modelo da etapa "Classificar o imóvel". Com o Bonsai local, o servidor precisa estar rodando (Modelos › Conexões).',
+};
+let abertos = new Set();
+
+const resumoParams = p => Object.entries(p || {}).filter(([k, v]) => v != null && !['imagem_ids'].includes(k))
+  .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.length : v}`).join(' · ') + (p?.imagem_ids ? ` · ${p.imagem_ids.length} imagem(ns)` : '');
+
+async function carregar() {
+  const t = await G.api('/api/tarefas?limite=100');
+  const rodando = t.filter(x => x.estado === 'executando'), fila = t.filter(x => x.estado === 'fila').reverse(), hist = t.filter(x => !['fila', 'executando'].includes(x.estado));
+  $('#resumo').textContent = `${rodando.length} em andamento · ${fila.length} na fila. Processamentos pesados rodam um de cada vez; downloads e importações em paralelo.`;
+  $('#rodando').innerHTML = rodando.length ? rodando.map(x => {
+    const p = G.progresso(x), aberto = abertos.has(x.id);
+    return `<div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;padding:16px 20px">
+        <span class="icone-tile">${icone(ICONE[x.tipo] || 'tarefas', 20)}</span>
+        <div style="flex:1 1 300px;display:flex;flex-direction:column;gap:6px;min-width:0">
+          <div style="display:flex;align-items:baseline;gap:8px"><span style="font-weight:600">${esc(x.titulo)}</span><span class="mudo trunca" style="font-size:13px">${esc(resumoParams(x.parametros))}</span><span class="num" style="margin-left:auto;font-weight:600">${p.rotulo}</span></div>
+          ${p.html}<span class="mudo" style="font-size:13px">${esc([x.cancelar ? 'cancelando…' : x.mensagem, p.nota].filter(Boolean).join(' · '))}</span>
+        </div>
+        <div style="display:flex;gap:6px"><button type="button" class="btn peq perigo" data-cancelar="${x.id}" ${x.cancelar ? 'disabled' : ''}>Cancelar</button>
+          <button type="button" class="btn peq" data-log="${x.id}" aria-expanded="${aberto}">${aberto ? 'Ocultar' : 'Detalhes'}</button></div></div>
+      ${aberto ? `<div class="log">${x.log.map(l => `<div><span style="color:var(--fraco)">${esc(l.t)}</span>  ${esc(l.msg)}</div>`).join('') || 'Sem mensagens ainda.'}</div>` : ''}</div>`;
+  }).join('') : '<div class="vazio">Nada em execução no momento.</div>';
+  $('#fila').innerHTML = fila.length ? fila.map((x, i) => `<div style="display:flex;align-items:center;gap:14px;padding:14px 20px">
+      <span style="width:28px;height:28px;border-radius:50%;background:var(--seg);color:var(--suave);display:grid;place-items:center;font-size:13px;font-weight:600;flex:none">${i + 1}</span>
+      <span style="flex:1;display:flex;flex-direction:column;min-width:0"><span style="font-weight:500">${esc(x.titulo)}</span><span class="mudo" style="font-size:13px">${esc(resumoParams(x.parametros))}</span></span>
+      <span class="mudo" style="font-size:13px">aguarda: ${FILA[x.fila]}</span>
+      <button type="button" class="btn fantasma peq" style="color:var(--erro)" data-cancelar="${x.id}">Remover</button></div>`).join('') : '<div class="vazio">A fila está vazia.</div>';
+  $('#historico').innerHTML = hist.length ? hist.slice(0, 40).map(x => {
+    const dur = x.iniciada_em && x.terminada_em ? G.duracao((new Date(x.terminada_em) - new Date(x.iniciada_em)) / 1000) : '';
+    const aberto = abertos.has(x.id);
+    return `<div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:14px 20px">
+      <span style="flex:1 1 260px;display:flex;flex-direction:column;min-width:0"><span style="font-weight:500">${esc(x.titulo)}</span><span style="font-size:13px;color:${x.estado === 'falhou' ? 'var(--erro)' : 'var(--mudo)'}">${esc(x.mensagem || '')}</span></span>
+      <span class="mudo" style="font-size:13px">${G.dataHora(x.terminada_em || x.criada_em)}${dur ? ' · ' + dur : ''}</span>
+      <span class="selo ${G.ESTADO[x.estado][1]}" style="width:92px;text-align:center;font-size:12px">${G.ESTADO[x.estado][0]}</span>
+      ${x.arquivo && x.estado === 'concluida' ? `<a class="btn peq" href="/api/tarefas/${x.id}/arquivo">Baixar</a>` : ''}
+      ${['falhou', 'cancelada'].includes(x.estado) ? `<button type="button" class="btn peq" data-repetir="${x.id}">Tentar de novo</button>` : ''}
+      <button type="button" class="btn peq fantasma" data-log="${x.id}" aria-expanded="${aberto}">${aberto ? 'Ocultar' : 'Log'}</button></div>
+      ${aberto ? `<div class="log" style="margin-left:20px">${x.log.map(l => `<div><span style="color:var(--fraco)">${esc(l.t)}</span>  ${esc(l.msg)}</div>`).join('') || 'Sem mensagens.'}</div>` : ''}</div>`;
+  }).join('') : '<div class="vazio">Nenhuma tarefa concluída ainda.</div>';
+  $$('[data-cancelar]').forEach(b => b.onclick = async () => { await G.api(`/api/tarefas/${b.dataset.cancelar}/cancelar`, {}); carregar(); });
+  $$('[data-repetir]').forEach(b => b.onclick = async () => { await G.api(`/api/tarefas/${b.dataset.repetir}/repetir`, {}); carregar(); });
+  $$('[data-log]').forEach(b => b.onclick = async () => {
+    const id = +b.dataset.log; abertos.has(id) ? abertos.delete(id) : abertos.add(id);
+    carregar();
+  });
+}
+
+function campos() {
+  const t = $('#tipo').value;
+  const vis = { pasta: t === 'importar_fotos', 'fonte-foto': t === 'importar_fotos', 'fonte-edif': t === 'importar_edificacoes', limite: ['detectar', 'classificar', 'ler_enderecos'].includes(t) };
+  $$('[data-p]').forEach(el => el.hidden = !vis[el.dataset.p]);
+  $('#explica').textContent = EXPLICA[t];
+}
+$('#tipo').onchange = campos;
+$('#nova').onclick = () => { $('#form').hidden = false; campos(); };
+$('#fechar').innerHTML = icone('fechar', 14);
+$('#fechar').onclick = () => { $('#form').hidden = true; };
+$('#enfileirar').onclick = async () => {
+  const t = $('#tipo').value, corpo = { tipo: t };
+  if (t === 'importar_fotos') Object.assign(corpo, { pasta: $('#pasta').value.trim() || null, fonte: $('#fonte-foto').value });
+  if (t === 'importar_edificacoes') corpo.fonte = $('#fonte-edif').value;
+  if ($('#limite').value && ['detectar', 'classificar', 'ler_enderecos'].includes(t)) corpo.limite = +$('#limite').value;
+  try { await G.api('/api/tarefas', corpo); $('#form').hidden = true; $('#erro').hidden = true; carregar(); }
+  catch (e) { $('#erro').hidden = false; $('#erro').textContent = e.message; }
+};
+// ---- Análise direcionada ----
+const SIT_ALVO = { observado_provavel: ['Observado (provável)', 'ok'], observado_possivel: ['Talvez observado', 'laranja'],
+                   nao_observado: ['Não observado', ''], sem_foto: ['Sem foto útil', ''] };
+const ASSOC = { provavel: 'provável', possivel: 'possível', nao_observado: 'não observado', caixa_recusada: 'caixa recusada pelo verificador' };
+const SIT_FOTO = { no_campo: 'alvo no campo de visão', na_borda: 'alvo na borda (margem da bússola)', obstruido: 'outra edificação no caminho' };
+let dir = null, selAlvos = new Set();
+const seg = s => s == null ? '—' : G.duracao(s);
+async function direcionada() {
+  if ($('#dir').hidden) return;
+  dir = await G.api('/api/direcionada');
+  $('#dir-amb').textContent = dir.ambiente === 'runpod' ? 'Runpod GPU' : 'Local';
+  $('#dir-amb').className = 'selo ' + (dir.ambiente === 'runpod' ? 'azul' : 'pri');
+  const imp = dir.importacoes[0];
+  $('#d-imp').textContent = imp ? `${G.ESTADO[imp.estado][0]}: ${imp.mensagem || imp.titulo}` : '';
+  if (!document.activeElement?.closest('#d-alvos'))
+    $('#d-alvos').innerHTML = dir.alvos.length ? dir.alvos.map(a => `<label style="display:flex;gap:10px;align-items:center;padding:8px 14px;font-size:13px">
+      <input type="checkbox" data-alvo="${a.id}" ${selAlvos.has(a.id) ? 'checked' : ''}>
+      <span style="flex:1">#${a.id} · matrícula <span class="mono">${esc(a.matricula)}</span> · ${esc(a.localidade || '')} <span class="mudo">(${nf(a.lat, 5)}, ${nf(a.lon, 5)})</span></span>
+      <span class="selo ${(SIT_ALVO[a.situacao] || ['', ''])[1]}">${a.situacao ? SIT_ALVO[a.situacao][0] : 'não analisado'}</span></label>`).join('')
+      : '<div class="vazio">Nenhum alvo ainda: envie uma planilha.</div>';
+  $$('[data-alvo]').forEach(c => c.onchange = () => { c.checked ? selAlvos.add(+c.dataset.alvo) : selAlvos.delete(+c.dataset.alvo); });
+  const med = Object.entries(dir.medicoes).map(([amb, m]) => `${amb === 'runpod' ? 'Runpod' : 'Local'}: ${seg(m.foto_s)} por foto (detecção ${seg(m.deteccao_s)}, verificação ${seg(m.verificacao_s)}, classificação ${seg(m.classificacao_s)}), ${seg(m.preparo_s)} de preparo por alvo · ${m.fotos} foto(s) medida(s)`);
+  $('#d-med').textContent = med.length ? 'Medido: ' + med.join(' · ') : 'Sem medições ainda: o tempo por foto aparece depois da primeira execução.';
+  $('#d-execs').innerHTML = dir.analises.map(a => {
+    const t = { id: a.tarefa_id, estado: a.estado, atual: a.atual, total: a.total, unidade: a.unidade, iniciada_em: a.iniciada_em }, p = G.progresso(t);
+    const ativo = ['fila', 'executando'].includes(a.estado);
+    return `<div class="cartao" style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center">
+        <span style="font-weight:600">#${a.id} · ${a.ambiente === 'runpod' ? 'Runpod GPU' : 'Local'}</span>
+        <span class="selo ${G.ESTADO[a.estado]?.[1] || ''}">${G.ESTADO[a.estado]?.[0] || '—'}</span>
+        <span class="mudo" style="font-size:13px">${a.alvo_ids.length} alvo(s) · ${a.config.fotos_por_alvo} foto(s) por alvo · processamento ${seg(a.gasto_s)}${a.estimativa_s ? ` · faltam ~${seg(a.estimativa_s)} pelas medições` : ''}${a.ambiente === 'runpod' && dir.custo_hora_usd ? ` · ~US$ ${nf(a.gasto_s / 3600 * dir.custo_hora_usd, 2)}` : ''}</span>
+        <span style="margin-left:auto;display:flex;gap:6px">
+          ${ativo ? `<button type="button" class="btn peq perigo" data-cancelar="${a.tarefa_id}">Cancelar</button>` : ''}
+          ${['falhou', 'cancelada'].includes(a.estado) ? `<button type="button" class="btn peq" data-repetir="${a.tarefa_id}">Retomar</button>` : ''}
+          <label class="mudo" style="font-size:12.5px;display:flex;gap:4px;align-items:center"><input type="checkbox" data-comp="${a.id}">comparar</label></span></div>
+      ${ativo ? p.html + `<span class="mudo" style="font-size:13px">${esc(a.mensagem || '')} ${p.nota ? '· ' + esc(p.nota) : ''}</span>` : a.mensagem ? `<span class="mudo" style="font-size:13px;color:${a.estado === 'falhou' ? 'var(--erro)' : ''}">${esc(a.mensagem)}</span>` : ''}
+      ${a.alvos.map(x => {
+        const r = x.resultado || {}, s = SIT_ALVO[r.situacao], ev = x.edificacao_evidencias || {};
+        return `<div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--borda);padding-top:8px;font-size:13px">
+          <span><b>Alvo #${x.alvo_id}</b> · matrícula <span class="mono">${esc(x.matricula)}</span> · ${s ? `<span class="selo ${s[1]}">${s[0]}</span>` : esc(x.estado)}
+            · ${r.imagens_no_raio ?? '—'} imagem(ns) no raio, ${r.situacoes ? (r.situacoes.no_campo || 0) + ' com o alvo no campo de visão' : ''}${x.erro ? ` · <span style="color:var(--erro)">${esc(x.erro)}</span>` : ''}</span>
+          <span class="mudo">${ev.edificacao_id ? `Edificação #${ev.edificacao_id} (${esc(ev.fonte)}), ${ev.contem_coordenada ? 'contém a coordenada' : `a ${nf(ev.distancia_m, 1)} m da coordenada`}${ev.ambigua ? ' · <b>ambígua</b>: há outra perto' : ''}` : esc(ev.motivo || '')}${r.motivo ? ' · ' + esc(r.motivo) : ''}</span>
+          ${x.fotos.map(f => `<span style="padding-left:12px">Foto <a href="revisao.html?foto=${f.foto_id}">${f.foto_id}</a> · ${nf(f.distancia_m, 0)} m · ${SIT_FOTO[f.situacao] || esc(f.situacao)} · ${f.caixas} caixa(s) · <b>${ASSOC[f.associacao] || f.etapa}</b>${f.categoria ? ` · IA: ${G.CAT_NOME[f.categoria] || f.categoria} (${nf(f.confianca, 2)})` : ''}${f.verificacao && f.verificacao !== 'nenhum' ? ` · verificador: ${esc(f.verificacao)}` : ''}
+            <span class="mudo">· ${seg(Object.values(f.tempos || {}).reduce((s, v) => s + v, 0))}</span>${f.erro ? ` · <span style="color:var(--erro)">${esc(f.erro)}</span>` : ''}</span>`).join('')}</div>`;
+      }).join('')}</div>`;
+  }).join('') || '<div class="vazio">Nenhuma execução ainda.</div>';
+  $$('#d-execs [data-cancelar]').forEach(b => b.onclick = async () => { await G.api(`/api/tarefas/${b.dataset.cancelar}/cancelar`, {}); direcionada(); });
+  $$('#d-execs [data-repetir]').forEach(b => b.onclick = async () => { await G.api(`/api/tarefas/${b.dataset.repetir}/repetir`, {}); direcionada(); });
+  $$('[data-comp]').forEach(c => c.onchange = comparar);
+}
+async function comparar() {
+  const ids = $$('[data-comp]:checked').map(c => +c.dataset.comp);
+  if (ids.length !== 2) { $('#d-comp').innerHTML = ids.length > 2 ? '<span class="mudo">Marque só duas execuções.</span>' : ''; return; }
+  const [b, a] = ids, c = await G.api(`/api/direcionada/comparar?a=${a}&b=${b}`);
+  $('#d-comp').innerHTML = `<div class="cartao" style="padding:14px 16px;overflow:auto"><b>#${a} (${c.a.ambiente}) × #${b} (${c.b.ambiente})</b> · processamento ${seg(c.a.gasto_s)} × ${seg(c.b.gasto_s)} · associação igual em ${c.iguais.associacao} de ${c.iguais.total} foto(s), categoria igual em ${c.iguais.categoria}
+    <table style="width:100%;font-size:12.5px;margin-top:8px"><thead><tr><th>Alvo</th><th>Foto</th><th>Caixas</th><th>Coincidentes</th><th>Associação</th><th>Categoria</th><th>Tempo</th></tr></thead><tbody>
+    ${c.fotos.map(f => `<tr><td>${f.alvo_id}</td><td>${f.foto_id}</td><td>${f.caixas_a} × ${f.caixas_b}</td><td>${f.caixas_coincidentes}</td><td>${esc(ASSOC[f.associacao_a] || '—')} × ${esc(ASSOC[f.associacao_b] || '—')}</td><td>${esc(f.categoria_a || '—')} × ${esc(f.categoria_b || '—')}</td><td>${seg(f.tempo_a_s)} × ${seg(f.tempo_b_s)}</td></tr>`).join('')}</tbody></table>
+    ${c.fotos.length ? '' : '<span class="mudo">Nenhuma foto em comum entre as duas execuções.</span>'}</div>`;
+}
+$('#fechar-dir').innerHTML = icone('fechar', 14);
+$('#fechar-dir').onclick = () => { $('#dir').hidden = true; };
+$('#abrir-dir').onclick = () => { $('#dir').hidden = false; direcionada(); };
+$('#d-enviar').onclick = () => {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.xlsx,.csv';
+  inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    const q = new URLSearchParams({ nome: f.name, quantidade: $('#d-qtd').value, semente: $('#d-semente').value, exigir_foto: $('#d-foto').checked });
+    if ($('#d-local').value.trim()) q.set('localidade', $('#d-local').value.trim());
+    if ($('#d-matr').value.trim()) q.set('matriculas', $('#d-matr').value.trim());
+    try { $('#d-imp').textContent = 'Enviando…'; const r = await G.enviar(`/api/direcionada/planilha?${q}`, f); G.acompanhar(r.id, { aoTerminar: direcionada }); direcionada(); }
+    catch (e) { $('#d-imp').textContent = 'Erro: ' + e.message; }
+  };
+  inp.click();
+};
+$('#d-analisar').onclick = async () => {
+  const num = id => $(id).value ? +$(id).value : null;
+  try {
+    if (!selAlvos.size) throw new Error('marque pelo menos um alvo');
+    await G.api('/api/direcionada/analises', { alvo_ids: [...selAlvos], fotos_por_alvo: num('#d-fotos'), raio_m: num('#d-raio'), tempo_max_min: num('#d-tempo'),
+      verificar: $('#d-verif').checked, reprocessar: $('#d-repro').checked, licenca_verificada: $('#d-lic').checked });
+    $('#d-erro').hidden = true; direcionada(); carregar();
+  } catch (e) { $('#d-erro').hidden = false; $('#d-erro').textContent = e.message; }
+};
+setInterval(() => { if (dir?.analises.some(a => ['fila', 'executando'].includes(a.estado)) || dir?.importacoes.some(t => ['fila', 'executando'].includes(t.estado))) direcionada(); }, 4000);
+if (new URLSearchParams(location.search).get('direcionada')) { $('#dir').hidden = false; direcionada(); }
+
+const nova = new URLSearchParams(location.search).get('nova');
+if (nova) { $('#form').hidden = false; if (nova !== '1') $('#tipo').value = nova; campos(); }
+carregar();
+setInterval(carregar, 2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+data/
+runs/
+modelos/
+ferramentas/
+*.pt
+.pytest_cache/
+.claude/
+*.gguf
+# planilhas reais de clientes (CPF/CNPJ, débitos): nunca no repositório público
+exemplos/*.xlsx

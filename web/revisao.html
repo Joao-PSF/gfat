@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoFAT · Revisão de imagens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="geofat.css">
+<script src="geofat.js"></script>
+<script src="caixas.js"></script>
+</head>
+<body>
+<div class="app">
+<main class="principal coluna">
+  <div class="barra-topo">
+    <div style="display:flex;flex-direction:column">
+      <h1>Revisão de imagens</h1>
+      <span class="sub">Confira as fachadas que a IA encontrou em cada foto e o tipo de cada imóvel</span>
+    </div>
+    <div style="margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px">
+      <span style="font-size:13.5px;color:var(--suave)"><strong id="revisadas" style="color:var(--texto)">0</strong> de <span id="total">0</span> fotos revisadas</span>
+      <span class="trilho verde" style="width:140px"><span id="barra" style="width:0"></span></span>
+      <button type="button" class="btn peq" id="classificar-pendentes" title="Classificar com a IA as fachadas novas ou redesenhadas"></button>
+    </div>
+  </div>
+
+  <div class="corpo">
+    <aside class="painel esq" aria-label="Fotos" style="flex-basis:272px;overflow:hidden;min-height:320px">
+      <div style="flex:none;padding:12px 12px 10px;border-bottom:1px solid var(--borda2)">
+        <div class="seg" role="group" aria-label="Filtro" id="filtros"></div>
+      </div>
+      <div class="miniaturas" id="lista"></div>
+    </aside>
+
+    <section class="area-edicao" aria-label="Editor de caixas" tabindex="0" id="area">
+      <div class="vista" id="vista"><div class="palco"></div></div>
+      <div class="ferramentas" role="toolbar" aria-label="Ferramentas" style="left:16px" id="ferramentas"></div>
+      <div class="ferramentas" style="right:16px">
+        <button type="button" aria-label="Afastar" id="menos"></button><span id="zoom" style="width:46px;text-align:center;font-size:13px;color:var(--suave)">100%</span><button type="button" aria-label="Aproximar" id="mais"></button>
+      </div>
+      <div class="navegacao">
+        <button type="button" class="redondo" id="anterior" aria-label="Foto anterior"></button>
+        <span class="meio"><span style="font-weight:600" class="trunca" id="nome-foto">—</span><span class="mudo" style="font-size:12.5px" id="pos-foto"></span></span>
+        <button type="button" class="redondo" id="proxima" aria-label="Próxima foto"></button>
+      </div>
+    </section>
+
+    <aside class="painel" aria-label="Classificação" style="flex-basis:312px;overflow:hidden">
+      <div style="flex:1;min-height:0;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:22px" id="lado"></div>
+      <div style="flex:none;display:flex;flex-direction:column;gap:8px;padding:14px 20px 18px;border-top:1px solid var(--borda)">
+        <span id="aviso-aprovar" class="mudo" style="font-size:12.5px;text-align:center" hidden></span>
+        <button type="button" class="btn pri" style="height:42px" id="aprovar">Aprovar e ir para a próxima</button>
+        <button type="button" class="btn perigo" id="inutil">Foto inutilizável</button>
+        <span class="mudo" style="text-align:center;font-size:12px">Atalhos: A aprovar · R rejeitar · B desenhar · V selecionar · Del remover · ← →</span>
+      </div>
+    </aside>
+  </div>
+</main>
+</div>
+<script>
+G.menu('revisao.html');
+const { esc, nf, $, icone } = G;
+const ESTADO_FOTO = { pendente: ['Pendente', 'var(--laranja)'], revisada: ['Revisada', 'var(--ok)'], inutilizavel: ['Inutilizável', 'var(--erro)'],
+                      sem_deteccao: ['Sem detecção', 'var(--mudo)'] };
+const url = new URLSearchParams(location.search);
+let fotos = [], filtro = url.get('foto') ? 'todas' : 'pendentes', atual = null, foto = null, sel = null;
+let decisoes = {};  // por imóvel: {categoria, unidades, removida} até aprovar
+
+const editor = new EditorCaixas($('#vista'), {
+  aoSelecionar: id => { sel = id; lado(); },
+  aoMudar: async (id, bbox, antes) => {
+    try { await G.api(`/api/imoveis/${id}/caixa`, { bbox }); cacheVinc = {}; await abrir(atual, id); }
+    catch (e) { alert('Não foi possível salvar a caixa: ' + e.message); await abrir(atual, id); }
+  },
+  aoCriar: async bbox => {
+    try { const r = await G.api(`/api/fotos/${atual}/imoveis`, { bbox }); ferramenta('selecionar'); await abrir(atual, r.id); }
+    catch (e) { alert('Não foi possível criar a fachada: ' + e.message); }
+  },
+});
+
+function ferramenta(m) {
+  editor.definirModo(m);
+  $('#ferramentas').innerHTML = [['selecionar', 'Selecionar', 'cursor', 'V', 'Selecionar e mover caixas'], ['desenhar', 'Desenhar caixa', 'caixa', 'B', 'Desenhar uma fachada que a IA não encontrou']]
+    .map(([v, r, i, k, t]) => `<button type="button" aria-pressed="${editor.modo === v}" data-modo="${v}" title="${t} (${k})">${icone(i, 16)}${r}</button>`).join('');
+  G.$$('#ferramentas button').forEach(b => b.onclick = () => ferramenta(b.dataset.modo));
+}
+
+function ordem() {
+  return fotos.filter(f => filtro === 'todas' || (filtro === 'pendentes' ? ['pendente', 'sem_deteccao'].includes(f.estado) : ['revisada', 'inutilizavel'].includes(f.estado)));
+}
+
+function listar() {
+  const lista = ordem(), rev = fotos.filter(f => ['revisada', 'inutilizavel'].includes(f.estado)).length;
+  $('#revisadas').textContent = nf(rev); $('#total').textContent = nf(fotos.length);
+  $('#barra').style.width = (fotos.length ? rev / fotos.length * 100 : 0) + '%';
+  $('#filtros').innerHTML = [['pendentes', 'Pendentes'], ['revisadas', 'Revisadas'], ['todas', 'Todas']]
+    .map(([v, r]) => `<button type="button" aria-pressed="${filtro === v}" data-f="${v}">${r}</button>`).join('');
+  G.$$('#filtros button').forEach(b => b.onclick = () => { filtro = b.dataset.f; listar(); });
+  $('#lista').innerHTML = lista.length ? lista.map(f => `<button type="button" class="miniatura" data-id="${f.id}" aria-current="${f.id === atual}">
+      <img src="/api/fotos/${f.id}/imagem?w=160" alt="" loading="lazy"><span class="txt"><span class="nome trunca">${esc(f.arquivo.split('/').pop())}</span>
+      <span class="ponto" style="font-size:12px;color:${ESTADO_FOTO[f.estado][1]}">${ESTADO_FOTO[f.estado][0]} · ${f.validos} fachada(s)</span></span></button>`).join('')
+    : '<div class="vazio">Nenhuma foto neste filtro.</div>';
+  G.$$('#lista .miniatura').forEach(b => b.onclick = () => abrir(+b.dataset.id));
+}
+
+async function carregarFotos() {
+  fotos = await G.api('/api/fotos');
+  listar();
+}
+
+async function abrir(id, selecionar) {
+  if (!id) return;
+  if (id !== atual) decisoes = {};
+  atual = id;
+  foto = await G.api(`/api/fotos/${id}`);
+  for (const m of foto.imoveis) {
+    decisoes[m.id] ??= { categoria: m.categoria_final, unidades: m.unidades_final, removida: m.fachada_valida === false };
+  }
+  const validas = foto.imoveis.filter(m => !decisoes[m.id].removida);
+  sel = selecionar ?? (foto.imoveis.some(m => m.id === sel) ? sel : validas[0]?.id ?? null);
+  editor.carregar(`/api/fotos/${id}/imagem?w=1600`, foto.largura, foto.altura, `Foto ${foto.arquivo}`);
+  desenhar();
+  const lista = ordem(), pos = lista.findIndex(f => f.id === id);
+  $('#nome-foto').textContent = foto.arquivo.split('/').pop();
+  $('#pos-foto').textContent = `${pos >= 0 ? pos + 1 : '–'} de ${lista.length} · ${foto.capturada_em ? G.dataHora(foto.capturada_em) : 'sem data'}`;
+  listar();
+  lado();
+}
+
+function desenhar() {
+  editor.definir(foto.imoveis.filter(m => m.bbox && !decisoes[m.id].removida).map(m => {
+    const c = decisoes[m.id].categoria;
+    return { id: m.id, bbox: m.bbox, cor: G.CAT_COR[c || 'sem_categoria'] === '#D6DAE0' ? '#0E9384' : G.CAT_COR[c],
+             rotulo: `#${m.id} ${c ? G.CAT_NOME[c] : 'sem classificação'}${m.score_deteccao ? ' ' + Math.round(m.score_deteccao * 100) + '%' : ''}` };
+  }), sel);
+}
+
+function lado() {
+  const m = foto?.imoveis.find(x => x.id === sel), d = m && decisoes[m.id];
+  const validas = foto ? foto.imoveis.filter(x => !decisoes[x.id].removida) : [];
+  let html = '';
+  if (m && !d.removida) {
+    const ia = m.categoria_ia;
+    const nota = !ia ? 'A IA ainda não classificou esta caixa (nova ou redesenhada). Escolha o tipo ou use "Classificar pendentes".'
+      : d.categoria === ia ? `Sugestão da IA (${esc(m.modelo_ia || '?')}), com ${Math.round((m.confianca_ia || 0) * 100)}% de confiança.`
+      : `Você corrigiu de ${G.CAT_NOME[ia].toLowerCase()} para ${G.CAT_NOME[d.categoria].toLowerCase()}.`;
+    html += `<div style="display:flex;flex-direction:column;gap:10px">
+      <h2 style="margin:0;font-size:14px;font-weight:600">Tipo do imóvel #${m.id}</h2>
+      <div class="categorias">${G.CATEGORIAS.map(c => `<button type="button" aria-pressed="${d.categoria === c}" data-cat="${c}"><span class="cor" style="background:${G.CAT_COR[c]}"></span>${G.CAT_NOME[c]}</button>`).join('')}</div>
+      <span class="mudo" style="font-size:12.5px">${nota}</span>
+      <div class="campo" style="flex-direction:row;align-items:center;gap:10px"><label for="unidades" style="font-weight:400;font-size:13px">Unidades independentes</label>
+        <input id="unidades" type="number" min="1" max="1000" value="${esc(d.unidades ?? '')}" style="width:90px;height:34px"></div>
+      ${m.evidencias_ia ? `<div style="font-size:13px;color:var(--texto2)"><strong style="font-weight:600">Evidências:</strong> ${esc(m.evidencias_ia)}</div>` : ''}
+      ${m.limitacoes_ia ? `<div style="font-size:13px;color:var(--mudo)"><strong style="font-weight:600">Limitações:</strong> ${esc(m.limitacoes_ia)}</div>` : ''}
+      ${m.texto_ocr ? `<div style="font-size:13px;color:var(--mudo)"><strong style="font-weight:600">Texto lido (OCR):</strong> ${esc(m.texto_ocr)}</div>` : ''}
+    </div>
+    <div id="vinculos" style="display:flex;flex-direction:column;gap:10px"></div>`;
+  } else if (foto) {
+    html += `<div class="mudo" style="font-size:13px">${foto.imoveis.length ? 'Selecione uma caixa na foto ou na lista abaixo.' : 'Nenhuma fachada nesta foto.'}
+      ${!foto.detectada ? ' A foto ainda não passou pela detecção: <button type="button" class="btn fantasma peq" id="detectar">Detectar fachadas</button>' : ''}</div>`;
+  }
+  if (foto) {
+    html += `<div style="display:flex;flex-direction:column;gap:6px">
+      <div style="display:flex;align-items:center"><h2 style="margin:0;font-size:14px;font-weight:600">Fachadas encontradas</h2><span class="mudo" style="margin-left:8px;font-size:12.5px">${validas.length}</span></div>
+      ${foto.imoveis.map(x => { const dx = decisoes[x.id]; return `<div class="objeto" aria-current="${x.id === sel}">
+        <button type="button" data-sel="${x.id}" ${dx.removida ? 'disabled' : ''}><span class="cor" style="background:${G.CAT_COR[dx.categoria || 'sem_categoria']}"></span>
+          <span style="font-size:13.5px;${dx.removida ? 'text-decoration:line-through;color:var(--mudo)' : ''}">#${x.id} ${dx.categoria ? G.CAT_NOME[dx.categoria] : 'sem classificação'}</span>
+          <span style="margin-left:auto;font-size:12.5px;color:${x.score_deteccao != null && x.score_deteccao < 0.4 ? 'var(--laranja)' : 'var(--mudo)'}">${x.detector === 'manual' ? 'desenhada' : x.score_deteccao != null ? Math.round(x.score_deteccao * 100) + '%' : x.bbox ? esc(x.detector || '') : 'foto inteira'}</span></button>
+        <button type="button" class="x" data-rem="${x.id}" aria-label="${dx.removida ? 'Restaurar' : 'Remover'} fachada #${x.id}" title="${dx.removida ? 'Restaurar' : 'Remover (Del)'}">${icone(dx.removida ? 'sync' : 'fechar', 15)}</button></div>`; }).join('')}
+      <span class="mudo" style="font-size:12.5px">Para adicionar uma fachada que a IA não encontrou, escolha <strong>Desenhar caixa</strong> e arraste sobre a foto. Fachadas removidas são descartadas ao aprovar.</span>
+      ${foto.credito ? `<span class="mudo" style="font-size:12px">Foto: ${esc(foto.credito)}</span>` : ''}
+    </div>`;
+  }
+  $('#lado').innerHTML = html;
+  G.$$('#lado [data-cat]').forEach(b => b.onclick = () => { decisoes[sel].categoria = b.dataset.cat; desenhar(); lado(); });
+  G.$$('#lado [data-sel]').forEach(b => b.onclick = () => { sel = +b.dataset.sel; ferramenta('selecionar'); desenhar(); lado(); });
+  G.$$('#lado [data-rem]').forEach(b => b.onclick = () => remover(+b.dataset.rem));
+  const u = $('#unidades'); if (u) u.onchange = () => { decisoes[sel].unidades = u.value ? +u.value : null; };
+  const det = $('#detectar'); if (det) det.onclick = () => G.api('/api/tarefas', { tipo: 'detectar' }).then(r => G.acompanhar(r.id, { aoTerminar: () => { carregarFotos(); abrir(atual); } }));
+  const falta = validas.filter(x => !decisoes[x.id].categoria);
+  $('#aviso-aprovar').hidden = !falta.length;
+  $('#aviso-aprovar').textContent = falta.length ? `Escolha o tipo de ${falta.map(x => '#' + x.id).join(', ')}` : '';
+  $('#aprovar').disabled = !foto || !!falta.length || !foto.imoveis.length;
+  if (m && !d.removida) vinculos(m.id);
+}
+
+// Observações do mesmo imóvel em outras fotos e números de endereço da fachada selecionada
+let cacheVinc = {};
+async function vinculos(id) {
+  let v = cacheVinc[id];
+  if (!v) { try { v = cacheVinc[id] = await G.api(`/api/imoveis/${id}`); } catch { return; } }
+  const alvo = $('#vinculos'); if (!alvo || sel !== id) return;
+  const outros = v.grupo ? v.grupo.membros.filter(o => o.id !== id) : [], sug = v.grupo?.origem === 'sugerido';
+  const linha = (o, acoes) => `<div class="obs">${G.miniatura(o)}<span><b>#${o.id}</b> ${G.CAT_NOME[o.categoria_final || 'sem_categoria']}
+      <small class="trunca">${esc(o.arquivo.split('/').pop())}</small><small>${o.edificacao_id ? 'edificação #' + o.edificacao_id : 'sem edificação'}</small></span>
+    <span class="acoes-obs">${acoes}<button type="button" class="btn fantasma peq" data-ir="${o.foto_id}:${o.id}">Abrir</button></span></div>`;
+  const ASSOC = { provavel: 'associação provável', possivel: 'associação possível', caixa_recusada: 'caixa recusada pelo verificador' };
+  alvo.innerHTML = (v.alvos?.length ? `<div class="obs" style="display:block;font-size:13px;background:var(--fundo);border-radius:8px;padding:8px 10px">
+      <b>Alvo da análise direcionada</b> ${[...new Map(v.alvos.map(a => [a.alvo_id, a])).values()].map(a => `#${a.alvo_id} (${ASSOC[a.associacao] || esc(a.associacao)}, análise #${a.analise_id})`).join(', ')}.
+      <small class="mudo" style="display:block">Sugestão pela geometria e pelo verificador: confira se esta fachada é mesmo a do imóvel-alvo.</small></div>` : '')
+    + `<h2 style="margin:0;font-size:14px;font-weight:600">Mesmo imóvel em outras fotos</h2>
+    ${outros.length ? `<span class="mudo" style="font-size:12.5px">${sug ? 'Sugerido pela geometria (mesma edificação, fachadas próximas). Confira nas fotos antes de confirmar.' : 'Confirmado pelo revisor.'}</span>
+        ${outros.map(o => linha(o, '')).join('')}
+        <span style="display:flex;gap:8px;flex-wrap:wrap">${sug ? `<button type="button" class="btn peq" data-confirmar="${v.grupo.id}">Confirmar grupo</button>` : ''}
+          <button type="button" class="btn peq" data-separar="${id}">Separar #${id} do grupo</button></span>`
+      : '<span class="mudo" style="font-size:12.5px">Nenhuma outra foto ligada a esta fachada.</span>'}
+    ${v.proximas.length ? `<span class="mudo" style="font-size:12.5px">Fotos próximas que podem mostrar o mesmo imóvel:</span>
+        ${v.proximas.slice(0, 6).map(o => linha(o, `<button type="button" class="btn peq" data-reunir="${o.id}">Reunir</button>`)).join('')}` : ''}
+    <h2 style="margin:6px 0 0;font-size:14px;font-weight:600">Número do endereço</h2>
+    ${v.leituras.map(l => `<div style="display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap;font-size:13px"><span style="flex:1;min-width:120px"><b>nº ${esc(l.numero)}</b>
+        <small class="mudo" style="display:block">${l.origem === 'ocr' ? 'OCR' : 'digitado'} · ${l.endereco_candidato ? `${l.referencia_fonte === 'cnefe' ? 'CNEFE' : 'OSM'}: ${esc(l.endereco_candidato)}` : 'sem endereço público com este número por perto'}</small></span>
+        <span class="selo ${l.estado === 'confirmada' ? 'ok' : l.estado === 'rejeitada' ? 'erro' : 'laranja'}">${l.estado}</span>
+        ${l.estado === 'pendente' ? `<button type="button" class="btn peq" data-leitura="${l.id}" data-estado="confirmada">Confirmar</button><button type="button" class="btn fantasma peq" data-leitura="${l.id}" data-estado="rejeitada">Rejeitar</button>` : ''}</div>`).join('')}
+    <form id="form-numero" style="display:flex;gap:8px"><label class="so-leitor" for="numero">Número visível na fachada</label>
+      <input id="numero" maxlength="20" placeholder="nº visível na placa" style="flex:1;min-width:0;height:34px"><button type="submit" class="btn peq">Adicionar</button></form>
+    ${v.edificacao_id ? `<a href="mapa.html?edificacao=${v.edificacao_id}" style="font-size:13px;font-weight:600;text-decoration:none">Ficha da edificação #${v.edificacao_id} →</a>` : ''}`;
+  const refazer = async promessa => {
+    try { await promessa; } catch (e) { alert('Erro: ' + e.message); }
+    cacheVinc = {}; vinculos(id);
+  };
+  G.$$('[data-ir]', alvo).forEach(b => b.onclick = () => { const [f, o] = b.dataset.ir.split(':').map(Number); filtro = 'todas'; abrir(f, o); });
+  G.$$('[data-reunir]', alvo).forEach(b => b.onclick = () => refazer(G.api('/api/grupos', { imoveis: [id, +b.dataset.reunir] })));
+  G.$$('[data-separar]', alvo).forEach(b => b.onclick = () => refazer(G.api(`/api/imoveis/${id}/separar`, {})));
+  G.$$('[data-confirmar]', alvo).forEach(b => b.onclick = () => refazer(G.api(`/api/grupos/${b.dataset.confirmar}/confirmar`, {})));
+  G.$$('[data-leitura]', alvo).forEach(b => b.onclick = () => refazer(G.api(`/api/leituras/${b.dataset.leitura}`, { estado: b.dataset.estado })));
+  $('#form-numero').onsubmit = e => { e.preventDefault(); const n = $('#numero').value.trim(); if (n) refazer(G.api(`/api/imoveis/${id}/leituras`, { numero: n })); };
+}
+
+function remover(id) {
+  decisoes[id].removida = !decisoes[id].removida;
+  if (decisoes[id].removida && sel === id) sel = null;
+  desenhar(); lado();
+}
+
+async function salvar(inutilizavel) {
+  if (!foto) return;
+  const imoveis = foto.imoveis.map(m => {
+    const d = decisoes[m.id], valida = !inutilizavel && !d.removida;
+    return { id: m.id, fachada_valida: valida, categoria: valida ? d.categoria : null, unidades: valida && d.unidades ? d.unidades : null };
+  });
+  try { await G.api(`/api/fotos/${atual}/revisao`, { imoveis }); }
+  catch (e) { alert('Não foi possível salvar: ' + e.message); return; }
+  await carregarFotos();
+  G.atualizarMenu();
+  const lista = ordem().filter(f => f.estado === 'pendente' || f.estado === 'sem_deteccao');
+  const prox = lista.find(f => f.id > atual) || lista[0];
+  if (prox) abrir(prox.id); else abrir(atual);
+}
+
+function ir(passo) {
+  const lista = ordem(); if (!lista.length) return;
+  const p = lista.findIndex(f => f.id === atual);
+  abrir(lista[(p + passo + lista.length) % lista.length].id);
+}
+
+$('#aprovar').onclick = () => salvar(false);
+$('#inutil').onclick = () => { if (confirm('Descartar todas as fachadas desta foto?')) salvar(true); };
+$('#anterior').innerHTML = icone('esq', 15); $('#proxima').innerHTML = icone('dir', 15);
+$('#anterior').onclick = () => ir(-1); $('#proxima').onclick = () => ir(1);
+$('#menos').innerHTML = icone('menos', 15); $('#mais').innerHTML = icone('mais', 15);
+const zoom = d => { editor.zoom = Math.min(3, Math.max(0.5, editor.zoom + d)); editor.ajustar(); $('#zoom').textContent = Math.round(editor.zoom * 100) + '%'; };
+$('#menos').onclick = () => zoom(-0.25); $('#mais').onclick = () => zoom(0.25);
+const cp = $('#classificar-pendentes');
+cp.innerHTML = icone('cerebro', 15) + 'Classificar pendentes';
+cp.onclick = async () => { const r = await G.api('/api/tarefas', { tipo: 'classificar' }); G.acompanhar(r.id, { aoTerminar: () => abrir(atual) }); };
+$('#area').addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (e.key === 'ArrowRight') { ir(1); e.preventDefault(); } else if (e.key === 'ArrowLeft') { ir(-1); e.preventDefault(); }
+  else if (k === 'a' && !$('#aprovar').disabled) salvar(false); else if (k === 'r') $('#inutil').click();
+  else if (k === 'b') ferramenta('desenhar'); else if (k === 'v') ferramenta('selecionar');
+  else if ((e.key === 'Delete' || e.key === 'Backspace') && sel) remover(sel);
+});
+ferramenta('selecionar');
+carregarFotos().then(() => {
+  const pedida = +url.get('foto');
+  abrir(pedida || ordem()[0]?.id || fotos[0]?.id, +url.get('imovel') || undefined);
+  $('#area').focus();
+});
+</script>
+</body>
+</html>

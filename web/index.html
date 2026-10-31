@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoFAT · Visão geral</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="geofat.css">
+<script src="geofat.js"></script>
+</head>
+<body>
+<div class="app">
+<main class="principal">
+<div class="pagina">
+  <div class="cabeca">
+    <div>
+      <h1>Visão geral</h1>
+      <p id="extrato">Carregando…</p>
+    </div>
+    <div class="acoes">
+      <button type="button" class="btn" id="importar"></button>
+      <a class="btn pri" href="processamentos.html?nova=1">Nova análise</a>
+    </div>
+  </div>
+
+  <div class="indicadores" id="indicadores"></div>
+
+  <section class="cartao pad" aria-labelledby="fluxo">
+    <div class="titulo-linha"><h2 id="fluxo">Fluxo de trabalho</h2><span class="mudo" style="font-size:13px">da captura das imagens ao relatório de divergências</span></div>
+    <div id="etapas" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:20px"></div>
+  </section>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:24px">
+    <section class="cartao pad" aria-labelledby="andamento">
+      <div class="titulo-linha" style="margin-bottom:4px"><h2 id="andamento">Em andamento</h2><a class="dir" href="processamentos.html">Ver todos</a></div>
+      <div id="tarefas" class="lista"></div>
+    </section>
+    <section class="cartao pad" aria-labelledby="situacoes">
+      <div class="titulo-linha"><h2 id="situacoes">Situação comercial dos imóveis</h2><a class="dir" href="comercial.html">Analisar</a></div>
+      <div id="barras" style="display:flex;flex-direction:column;gap:10px"></div>
+    </section>
+  </div>
+</div>
+</main>
+</div>
+<script>
+G.menu('index.html');
+const { esc, nf, pct } = G;
+
+function etapa(n, titulo, atual, total, href, nota, cta) {
+  const p = total ? Math.min(100, atual / total * 100) : 0, feito = total && atual >= total;
+  return `<a href="${href}" style="display:flex;flex-direction:column;gap:8px;color:var(--texto);text-decoration:none">
+    <span style="display:flex;align-items:center;gap:10px"><span style="width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;background:${feito ? 'var(--ok-fundo)' : 'var(--pri-fundo)'};color:${feito ? 'var(--ok)' : 'var(--pri-esc)'}">${n}</span><span style="font-weight:600">${titulo}</span></span>
+    <span class="trilho fino ${feito ? 'verde' : ''}"><span style="width:${p}%"></span></span>
+    <span style="font-size:13px;color:var(--suave)">${nota}</span>
+    <span style="font-size:13px;font-weight:600;color:var(--link)">${cta} →</span></a>`;
+}
+
+async function carregar() {
+  const [r, t] = await Promise.all([G.api('/api/resumo'), G.api('/api/tarefas?ativas=true&limite=6')]);
+  G.$('#extrato').textContent = !r.gsan_ligacoes ? 'Nenhum extrato do GSAN no banco. A classificação das fachadas não depende dele.'
+    : `${nf(r.gsan_ligacoes)} ligações do GSAN${r.gsan_importado_em ? ', última importação em ' + G.dataHora(r.gsan_importado_em) : ''} · usado só para consulta e comparação.`;
+  const div = (r.situacoes.possivel_divergencia || 0) + (r.situacoes.divergencia_confirmada || 0);
+  const ind = [
+    ['Fotos importadas', nf(r.fotos), `${nf(r.fotos_com_direcao)} com direção da câmera`],
+    ['Imóveis detectados', nf(r.validos), `${nf(r.classificados)} classificados pela IA`],
+    ['Revisados', nf(r.revisados), `${pct(r.revisados, r.validos)}% dos imóveis válidos`],
+    ['Divergências com o GSAN', r.gsan_ligacoes ? nf(div) : '—',
+     r.gsan_ligacoes ? `${nf(r.situacoes.divergencia_confirmada || 0)} confirmadas pela revisão` : 'importe o extrato do GSAN'],
+  ];
+  G.$('#indicadores').innerHTML = ind.map(([a, b, c]) => `<div><span class="rot">${a}</span><span class="val">${b}</span><span class="nota">${c}</span></div>`).join('');
+  G.$('#etapas').innerHTML = [
+    etapa(1, 'Detectar fachadas', r.fotos_detectadas, r.fotos, 'processamentos.html?nova=detectar', `${nf(r.fotos_detectadas)} de ${nf(r.fotos)} fotos processadas`, 'Detectar'),
+    etapa(2, 'Classificar com a IA', r.classificados, r.validos, 'processamentos.html?nova=classificar', `${nf(r.classificados)} de ${nf(r.validos)} fachadas`, 'Classificar'),
+    etapa(3, 'Revisar resultados', r.revisados, r.validos, 'revisao.html', `${nf(r.revisados)} de ${nf(r.validos)} revisadas`, 'Continuar revisão'),
+    etapa(4, 'Localizar no mapa', r.localizados, r.validos, 'mapa.html', `${nf(r.localizados)} de ${nf(r.validos)} com edificação sugerida ou confirmada`, 'Ver no mapa'),
+    etapa(5, 'Comparar com o GSAN', r.associados, r.revisados, 'comercial.html',
+          r.gsan_ligacoes ? `${nf(r.associados)} de ${nf(r.revisados)} revisados com matrícula confirmada` : 'aguardando o extrato do GSAN', 'Ver divergências'),
+  ].join('');
+  G.$('#tarefas').innerHTML = t.length ? t.map(x => {
+    const p = G.progresso(x);
+    return `<div style="display:flex;flex-direction:column;gap:6px;padding:12px 0">
+      <div style="display:flex;align-items:baseline;gap:8px"><span style="font-weight:500">${esc(x.titulo)}</span><span class="num" style="margin-left:auto;font-weight:600">${x.estado === 'fila' ? 'na fila' : p.rotulo}</span></div>
+      ${x.estado === 'executando' ? p.html : ''}<span class="mudo" style="font-size:13px">${esc([x.mensagem, p.nota].filter(Boolean).join(' · ') || G.ESTADO[x.estado][0])}</span></div>`;
+  }).join('') : '<div class="vazio">Nada em execução no momento.</div>';
+  const ordem = ['divergencia_confirmada', 'possivel_divergencia', 'sem_matricula_confirmada', 'sem_correspondencia', 'associacao_inconclusiva', 'classificacao_inconclusiva', 'ok', 'nao_classificado', 'descartado'];
+  const max = Math.max(1, ...Object.values(r.situacoes));
+  const linhas = ordem.filter(s => r.situacoes[s]);
+  G.$('#barras').innerHTML = linhas.length ? linhas.map(s => `<div style="display:grid;grid-template-columns:210px 1fr 44px;align-items:center;gap:12px;font-size:13.5px">
+      <span class="trunca">${G.SITUACAO[s][0]}</span><span class="trilho"><span style="width:${r.situacoes[s] / max * 100}%;background:${s.includes('divergencia') ? '#E8912D' : '#9AA2AC'}"></span></span>
+      <span class="num" style="text-align:right;font-weight:600">${nf(r.situacoes[s])}</span></div>`).join('')
+    + (r.gsan_ligacoes ? '' : '<p class="mudo" style="margin:4px 0 0;font-size:12.5px">Sem GSAN importado, nenhum imóvel tem matrícula correspondente: "sem matrícula correspondente" aqui não é alerta.</p>')
+    : '<div class="vazio">Nenhum imóvel detectado ainda.</div>';
+}
+
+const imp = G.$('#importar');
+imp.innerHTML = G.icone('subir', 15) + 'Importar extrato GSAN';
+imp.onclick = () => G.importarGsan(carregar);
+carregar();
+setInterval(carregar, 5000);
+</script>
+</body>
+</html>
